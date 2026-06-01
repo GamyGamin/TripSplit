@@ -336,6 +336,7 @@ function deleteExpense(id){
   const trip=getTrip();if(!trip)return;
   trip.expenses=trip.expenses.filter(e=>e.id!==id);
   saveState();renderExpenses();renderTripDetail();renderTripsGrid();
+  if (window.removeLinkedMoneyTx) window.removeLinkedMoneyTx(id);
   toast('Expense deleted','info');
 }
 
@@ -466,6 +467,8 @@ function saveExpense(){
   }
   saveState();closeModal('addExpenseModal');
   renderExpenses();renderTripDetail();renderTripsGrid();
+  // Auto-link this expense to the user's personal Money Manager (no-op if not a payer)
+  if (window.autoLinkTripExpense) window.autoLinkTripExpense(trip, expense);
 }
 
 // ── BALANCE COMPUTATION ──
@@ -1019,4 +1022,5 @@ document.querySelectorAll('.modal-overlay').forEach(o=>{
 
 // ── INIT ──
 loadState();
-showTripsView();
+// money.js (loaded right after this file) calls initMoneyManager() which
+// renders the default Money Manager landing.
