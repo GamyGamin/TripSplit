@@ -10,23 +10,46 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=cloud1">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js" defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js" defer></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js" defer></script>
 </head>
 <body>
 <div class="app">
-  <header>
+  <aside class="app-sidebar">
     <div class="logo">
       <div class="logo-icon">✈️</div>
       <div class="logo-text">Trip<span>Split</span></div>
     </div>
-    <nav class="main-nav">
+    <nav class="side-nav" aria-label="Primary">
       <button class="nav-btn active" data-section="money" onclick="showMoneyView()">💰 Money Manager</button>
       <button class="nav-btn" data-section="trips" onclick="showTripsMainView()">✈️ Trips</button>
     </nav>
-    <div class="header-actions" id="headerActions"></div>
-  </header>
+    <div class="sidebar-auth" id="sidebarAuth">
+      <div class="auth-card signed-out" id="sidebarSignedOut">
+        <div class="auth-copy">
+          <strong>Account</strong>
+          <span>Use Google to fill your profile.</span>
+        </div>
+        <div class="google-button-slot" id="googleSignInSidebar"></div>
+      </div>
+      <div class="auth-card signed-in" id="sidebarSignedIn" style="display:none;">
+        <img class="auth-avatar" id="googleUserAvatar" alt="">
+        <div class="auth-copy">
+          <strong id="googleUserName">Signed in</strong>
+          <span id="googleUserEmail"></span>
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="signOutGoogle()">Sign out</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="app-content">
+    <div class="content-toolbar" id="headerActions"></div>
 
   <main>
     <!-- ═══ MONEY MANAGER (default) ═══ -->
@@ -146,6 +169,7 @@
       <div id="tabMembers"  class="tab-content" style="display:none;"><div id="membersContent"></div></div>
     </div>
   </main>
+  </div>
 </div>
 
 <!-- Hidden file input for restore -->
@@ -188,9 +212,11 @@
     <div class="form-group">
       <label>Add Members</label>
       <div class="members-input-row">
-        <input type="text" class="form-control" id="memberInput" placeholder="Name then press Enter" onkeydown="handleMemberInput(event)">
+        <input type="text" class="form-control" id="memberInput" placeholder="Member name" onkeydown="handleMemberInput(event)">
+        <input type="email" class="form-control" id="memberEmailInput" placeholder="Gmail / email" onkeydown="handleMemberInput(event)">
         <button class="btn btn-ghost" onclick="addMemberFromInput()">Add</button>
       </div>
+      <div class="form-help">Members with email addresses can see this trip after signing in with that Google account.</div>
       <div class="member-tags" id="memberTags"></div>
     </div>
     <button class="btn btn-primary" style="width:100%;justify-content:center;padding:13px;" onclick="createTrip()">Create Trip 🚀</button>
@@ -317,6 +343,11 @@
         <option value="CAD">🇨🇦 CAD — Canadian Dollar</option>
         <option value="THB">🇹🇭 THB — Thai Baht</option>
       </select>
+    </div>
+    <div class="profile-google-block">
+      <div class="profile-google-divider"><span>or</span></div>
+      <div class="google-button-slot" id="googleSignInProfile"></div>
+      <p class="profile-google-note">Google sign-in fills your profile name and stores your Google account on this device.</p>
     </div>
     <button class="btn btn-mm" style="width:100%;justify-content:center;padding:12px;" onclick="saveProfileSettings()">Save Profile</button>
   </div>
@@ -459,12 +490,17 @@
       <label>Name</label>
       <input type="text" class="form-control" id="newMemberName" placeholder="Member name">
     </div>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" class="form-control" id="newMemberEmail" placeholder="member@gmail.com">
+      <div class="form-help">If this email signs in to TripSplit, this trip will appear for them.</div>
+    </div>
     <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="addMemberToTrip()">Add Member</button>
   </div>
 </div>
 
-<script src="app.js" defer></script>
-<script src="money.js" defer></script>
-<script src="pwa.js" defer></script>
+<script src="app.js?v=cloud1" defer></script>
+<script src="money.js?v=cloud1" defer></script>
+<script src="pwa.js?v=cloud1" defer></script>
 </body>
 </html>

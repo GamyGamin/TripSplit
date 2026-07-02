@@ -9,11 +9,34 @@ const AV_COLORS  = ['#ef476f','#06d6a0','#ffd166','#a855f7','#0ea5e9','#ff6b35',
 let state = { trips:[], currentTripId:null, splitMode:'equal', editExpenseId:null, manualAmount:false, partialSettle:null };
 let newTripMembers = [], selectedEmoji = '🏖️';
 let pendingRestoreTrips = null;
+let tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false };
+
+function normalizeEmail(email) {
+  return (email || '').trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+}
+
+function getCurrentUserEmail() {
+  return normalizeEmail(state.profile?.googleUser?.email || tripCloud.email || '');
+}
+
+function getCurrentUserName() {
+  return (state.profile?.name || state.profile?.googleUser?.name || '').trim();
+}
 
 function migrateTrips(trips) {
   trips.forEach(trip => {
     trip.expenses = trip.expenses || [];
     trip.settlements = trip.settlements || [];
+    trip.members = trip.members || [];
+    trip.memberEmails = (trip.memberEmails || []).map(normalizeEmail).filter(Boolean);
+    trip.memberProfiles = trip.memberProfiles || trip.members.map((name, i) => ({
+      name,
+      email: normalizeEmail(trip.memberEmails[i] || ''),
+    }));
     trip.expenses.forEach(exp => {
       if (exp.paidBy && !exp.payers) { exp.payers = { [exp.paidBy]: exp.amount }; delete exp.paidBy; }
     });
@@ -25,7 +48,90 @@ function loadState() {
   try { state.trips = JSON.parse(localStorage.getItem('tripsplit_v2') || '[]'); } catch {}
   migrateTrips(state.trips);
 }
-function saveState() { localStorage.setItem('tripsplit_v2', JSON.stringify(state.trips)); }
+function saveState(options = {}) {
+  localStorage.setItem('tripsplit_v2', JSON.stringify(state.trips));
+  if (options.sync !== false) syncTripsToCloud();
+}
+
+function tripCanSync(trip) {
+  return !!(tripCloud.ready && tripCloud.email && trip.memberEmails && trip.memberEmails.includes(tripCloud.email));
+}
+
+function tripForCloud(trip) {
+  return {
+    ...JSON.parse(JSON.stringify(trip)),
+    memberEmails: Array.from(new Set((trip.memberEmails || []).map(normalizeEmail).filter(Boolean))),
+    updatedAt: Date.now(),
+    updatedBy: tripCloud.email || '',
+  };
+}
+
+function mergeCloudTrips(cloudTrips) {
+  const cloudIds = new Set(cloudTrips.map(t => t.id));
+  const localOnly = state.trips.filter(t => !(t.cloudSynced && cloudIds.has(t.id)));
+  state.trips = [...cloudTrips, ...localOnly].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  migrateTrips(state.trips);
+  saveState({ sync:false });
+}
+
+async function syncTripsToCloud() {
+  if (!tripCloud.ready || tripCloud.applying) return;
+  const trips = state.trips.filter(tripCanSync).map(tripForCloud);
+  await Promise.all(trips.map(trip =>
+    tripCloud.db.collection('trips').doc(trip.id).set(trip, { merge:true }).catch(err => {
+      console.warn('Trip cloud sync failed:', err);
+    })
+  ));
+}
+
+async function startTripCloudSync(firebaseUser) {
+  if (!firebaseUser || !firebaseUser.email || !window.firebase?.firestore) return;
+  if (tripCloud.unsubscribe) tripCloud.unsubscribe();
+
+  tripCloud.db = firebase.firestore();
+  tripCloud.user = firebaseUser;
+  tripCloud.email = normalizeEmail(firebaseUser.email);
+  tripCloud.ready = true;
+
+  await tripCloud.db.collection('users').doc(firebaseUser.uid).set({
+    uid: firebaseUser.uid,
+    email: tripCloud.email,
+    name: firebaseUser.displayName || getCurrentUserName() || '',
+    photoURL: firebaseUser.photoURL || '',
+    lastSeenAt: Date.now(),
+  }, { merge:true });
+
+  tripCloud.unsubscribe = tripCloud.db.collection('trips')
+    .where('memberEmails', 'array-contains', tripCloud.email)
+    .onSnapshot(snapshot => {
+      tripCloud.applying = true;
+      const cloudTrips = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { ...data, id: data.id || doc.id, cloudSynced:true };
+      });
+      mergeCloudTrips(cloudTrips);
+      tripCloud.applying = false;
+      if (document.getElementById('tripsView')?.classList.contains('active')) renderTripsGrid();
+      if (state.currentTripId && document.getElementById('tripDetailView')?.classList.contains('active')) {
+        renderTripDetail();
+        renderExpenses();
+      }
+    }, err => {
+      tripCloud.applying = false;
+      console.warn('Trip cloud listener failed:', err);
+      toast('Cloud trip sync needs Firestore access/rules','error');
+    });
+
+  syncTripsToCloud();
+}
+
+function stopTripCloudSync() {
+  if (tripCloud.unsubscribe) tripCloud.unsubscribe();
+  tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false };
+}
+
+window.startTripCloudSync = startTripCloudSync;
+window.stopTripCloudSync = stopTripCloudSync;
 
 // ── UTILS ──
 function uuid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -43,6 +149,18 @@ function avColor(name) { let h=0; for (let c of name) h=(h*31+c.charCodeAt(0))%A
 function avatar(name, size=36) {
   const col = avColor(name);
   return `<div class="avatar" style="background:${col}22;color:${col};width:${size}px;height:${size}px;font-size:${Math.floor(size*.38)}px;">${name[0].toUpperCase()}</div>`;
+}
+function getMemberEmail(trip, memberName) {
+  return normalizeEmail((trip.memberProfiles || []).find(m => m.name === memberName)?.email || '');
+}
+function getMyTripMemberName(trip) {
+  const email = getCurrentUserEmail();
+  if (email) {
+    const match = (trip.memberProfiles || []).find(m => normalizeEmail(m.email) === email);
+    if (match) return match.name;
+  }
+  const profileName = getCurrentUserName().toLowerCase();
+  return trip.members.find(m => m.toLowerCase() === profileName) || trip.members[0];
 }
 function miniAvatar(name, size=16) {
   const col = avColor(name);
@@ -139,7 +257,7 @@ function renderTripsGrid() {
   grid.innerHTML = state.trips.map(trip => {
     const total = trip.expenses.reduce((s,e)=>s+e.amount,0);
     const { netBalances } = computeBalances(trip);
-    const my = trip.members[0], myBal = netBalances[my]||0;
+    const my = getMyTripMemberName(trip), myBal = netBalances[my]||0;
     const cls = myBal>0.01?'owed':myBal<-0.01?'owe':'settled';
     const txt = myBal>0.01?`+${fmt(myBal,trip.currency)} owed to you`:myBal<-0.01?`${fmt(myBal,trip.currency)} you owe`:'All settled';
     return `
@@ -162,9 +280,15 @@ function renderTripsGrid() {
 // ── NEW TRIP ──
 function openNewTripModal() {
   newTripMembers=[]; selectedEmoji='🏖️';
-  ['tripName','memberInput'].forEach(id=>document.getElementById(id).value='');
+  ['tripName','memberInput','memberEmailInput'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('memberTags').innerHTML='';
   ['tripStartDate','tripEndDate'].forEach(id=>document.getElementById(id).value='');
+  const myEmail = getCurrentUserEmail();
+  const myName = getCurrentUserName();
+  if (myName || myEmail) {
+    newTripMembers.push({ name:myName || myEmail.split('@')[0], email:myEmail });
+    renderNewMemberTags();
+  }
   renderEmojiPicker();
   openModal('newTripModal');
 }
@@ -175,29 +299,36 @@ function renderEmojiPicker() {
 function selectEmoji(e) { selectedEmoji=e; renderEmojiPicker(); }
 function handleMemberInput(e) { if(e.key==='Enter'){e.preventDefault();addMemberFromInput();} }
 function addMemberFromInput() {
-  const v=document.getElementById('memberInput').value.trim();
-  if(!v)return;
-  if(newTripMembers.includes(v)){toast('Already added','error');return;}
-  newTripMembers.push(v);
+  const name=document.getElementById('memberInput').value.trim();
+  const email=normalizeEmail(document.getElementById('memberEmailInput').value);
+  if(!name && !email)return;
+  if(email && !isValidEmail(email)){toast('Enter a valid email','error');return;}
+  const displayName = name || email.split('@')[0];
+  if(newTripMembers.some(m => m.name.toLowerCase() === displayName.toLowerCase() || (email && m.email === email))){toast('Already added','error');return;}
+  newTripMembers.push({ name:displayName, email });
   document.getElementById('memberInput').value='';
+  document.getElementById('memberEmailInput').value='';
   renderNewMemberTags();
 }
-function removeNewMember(name){newTripMembers=newTripMembers.filter(m=>m!==name);renderNewMemberTags();}
+function removeNewMember(index){newTripMembers.splice(index,1);renderNewMemberTags();}
 function renderNewMemberTags(){
-  document.getElementById('memberTags').innerHTML=newTripMembers.map(m=>`
-    <div class="member-tag">${avatar(m,22)} ${m}
-      <span class="remove-member" onclick="removeNewMember('${m}')">✕</span>
+  document.getElementById('memberTags').innerHTML=newTripMembers.map((m,i)=>`
+    <div class="member-tag">${avatar(m.name,22)} <span>${m.name}${m.email ? ` <small>${m.email}</small>` : ''}</span>
+      <span class="remove-member" onclick="removeNewMember(${i})">✕</span>
     </div>`).join('');
 }
 function createTrip(){
   const name=document.getElementById('tripName').value.trim();
   if(!name){toast('Enter a trip name','error');return;}
   if(!newTripMembers.length){toast('Add at least one member','error');return;}
+  const memberNames = newTripMembers.map(m => m.name);
+  const memberEmails = Array.from(new Set(newTripMembers.map(m => normalizeEmail(m.email)).filter(Boolean)));
+  const memberProfiles = newTripMembers.map(m => ({ name:m.name, email:normalizeEmail(m.email) }));
   const trip={id:uuid(),name,emoji:selectedEmoji,
     startDate:document.getElementById('tripStartDate').value,
     endDate:document.getElementById('tripEndDate').value,
     currency:document.getElementById('tripCurrency').value,
-    members:[...newTripMembers],expenses:[],settlements:[]};
+    members:memberNames,memberEmails,memberProfiles,createdByEmail:getCurrentUserEmail(),updatedAt:Date.now(),expenses:[],settlements:[]};
   state.trips.unshift(trip);
   saveState();closeModal('newTripModal');
   toast(`Trip "${name}" created! 🎉`,'success');renderTripsGrid();
@@ -692,13 +823,14 @@ function renderMembersTab(){
     ${trip.members.map(m=>{
       const bal=netBalances[m]||0;
       const balText=bal>0.01?`Gets back ${fmt(bal)}`:bal<-0.01?`Owes ${fmt(-bal)}`:'✅ Settled';
+      const email=getMemberEmail(trip,m);
       return `
       <div class="sidebar-card" style="margin-bottom:0">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
           ${avatar(m,42)}
           <div>
             <div style="font-weight:600;font-size:15px;">${m}</div>
-            <div style="font-size:12px;color:var(--muted);">Paid ${fmt(memberPaid[m]||0)}</div>
+            <div style="font-size:12px;color:var(--muted);">${email ? email + ' · ' : ''}Paid ${fmt(memberPaid[m]||0)}</div>
           </div>
         </div>
         <div style="font-size:13px;font-weight:600;color:var(--${bal>0.01?'teal':bal<-0.01?'red':'muted'})">${balText}</div>
@@ -708,13 +840,25 @@ function renderMembersTab(){
 }
 
 // ── ADD MEMBER ──
-function openAddMemberModal(){document.getElementById('newMemberName').value='';openModal('addMemberModal');}
+function openAddMemberModal(){
+  document.getElementById('newMemberName').value='';
+  document.getElementById('newMemberEmail').value='';
+  openModal('addMemberModal');
+}
 function addMemberToTrip(){
   const trip=getTrip();if(!trip)return;
   const name=document.getElementById('newMemberName').value.trim();
+  const email=normalizeEmail(document.getElementById('newMemberEmail').value);
   if(!name){toast('Enter a name','error');return;}
+  if(email && !isValidEmail(email)){toast('Enter a valid email','error');return;}
   if(trip.members.includes(name)){toast('Already a member','error');return;}
+  trip.memberEmails = trip.memberEmails || [];
+  trip.memberProfiles = trip.memberProfiles || trip.members.map(memberName => ({ name:memberName, email:getMemberEmail(trip, memberName) }));
+  if(email && trip.memberEmails.includes(email)){toast('That email is already on this trip','error');return;}
   trip.members.push(name);
+  if(email) trip.memberEmails.push(email);
+  trip.memberProfiles.push({ name, email });
+  trip.updatedAt = Date.now();
   saveState();closeModal('addMemberModal');renderTripDetail();renderExpenses();
   toast(`${name} added to trip!`,'success');
 }

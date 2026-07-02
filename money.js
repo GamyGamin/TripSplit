@@ -44,7 +44,7 @@ function mmAssetType(id){
 }
 
 // ── STATE ──
-state.profile = { name:'', currency:'USD', firstRun:true };
+state.profile = { name:'', currency:'USD', firstRun:true, googleUser:null };
 state.money = { transactions: [], assets: [] };
 state.mmPeriod = 'thisMonth';
 state.mmCustomFrom = null;
@@ -275,7 +275,7 @@ function showMoneyView(){
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('moneyView').classList.add('active');
   document.body.classList.add('mm-mode');
-  document.querySelectorAll('.main-nav .nav-btn').forEach((b,i) => b.classList.toggle('active', i === 0));
+  document.querySelectorAll('.side-nav .nav-btn').forEach((b,i) => b.classList.toggle('active', i === 0));
   document.getElementById('headerActions').innerHTML = `
     <button class="btn btn-ghost" onclick="openMMSettings()" title="Profile settings">⚙️</button>
     <button class="btn btn-mm-ghost" onclick="openAddTxModal('income')">+ Income</button>
@@ -288,7 +288,7 @@ function showTripsMainView(){
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('tripsView').classList.add('active');
   document.body.classList.remove('mm-mode');
-  document.querySelectorAll('.main-nav .nav-btn').forEach((b,i) => b.classList.toggle('active', i === 1));
+  document.querySelectorAll('.side-nav .nav-btn').forEach((b,i) => b.classList.toggle('active', i === 1));
   document.getElementById('headerActions').innerHTML = `
     <button class="btn btn-ghost" onclick="downloadBackup()" title="Download backup file">⬇ Backup</button>
     <button class="btn btn-ghost" onclick="triggerRestoreUpload()" title="Restore from backup file">⬆ Restore</button>
@@ -530,6 +530,170 @@ function saveProfileSettings(){
   renderMoneyView();
 }
 function openMMSettings(){ openProfileSetup(false); }
+
+// Google Identity Services sign-in stores profile identity locally.
+const GOOGLE_CLIENT_ID = '282834653236-vgkijul33cp0b8dftpl300ha241dtooj.apps.googleusercontent.com';
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyC_8UgDD7TDvFeRv9AWrtQKM1ni0yU4Tc8",
+  authDomain: "tripsplit-94d96.firebaseapp.com",
+  projectId: "tripsplit-94d96",
+  storageBucket: "tripsplit-94d96.firebasestorage.app",
+  messagingSenderId: "936242386888",
+  appId: "1:936242386888:web:5a174c52e7c3da57b052fd",
+  measurementId: "G-NS0SQ00X7Q"
+};
+let googleButtonsRendered = false;
+let firebaseReady = false;
+
+function initFirebase() {
+  if (firebaseReady) return true;
+  if (!window.firebase?.initializeApp || !firebase.auth || !firebase.firestore) return false;
+  if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+  firebase.auth().onAuthStateChanged(user => {
+    if (user) {
+      state.profile.googleUser = {
+        id: user.uid,
+        name: user.displayName || state.profile.name || '',
+        email: user.email || '',
+        picture: user.photoURL || '',
+      };
+      state.profile.name = state.profile.name || user.displayName || '';
+      state.profile.firstRun = false;
+      saveProfile();
+      updateGoogleAuthUI();
+      if (window.startTripCloudSync) startTripCloudSync(user);
+    } else if (window.stopTripCloudSync) {
+      stopTripCloudSync();
+    }
+  });
+  firebaseReady = true;
+  return true;
+}
+
+function initFirebaseWhenReady(attempt = 0) {
+  if (initFirebase()) return;
+  if (attempt < 60) setTimeout(() => initFirebaseWhenReady(attempt + 1), 150);
+}
+
+function signInFirebaseWithGoogleCredential(idToken, attempt = 0) {
+  if (!idToken) return;
+  if (!initFirebase()) {
+    if (attempt < 60) setTimeout(() => signInFirebaseWithGoogleCredential(idToken, attempt + 1), 150);
+    return;
+  }
+  const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
+  firebase.auth().signInWithCredential(credential).catch(err => {
+    console.warn('Firebase Google sign-in failed:', err);
+    toast('Google profile saved, but cloud sync sign-in failed','error');
+  });
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(ch => '%' + ('00' + ch.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function handleGoogleCredential(response) {
+  const payload = decodeJwtPayload(response.credential || '');
+  if (!payload || !payload.email) {
+    toast('Google sign-in failed. Please try again.','error');
+    return;
+  }
+
+  const displayName = payload.name || payload.given_name || payload.email.split('@')[0];
+  const wasFirstRun = state.profile.firstRun || !state.profile.name;
+  state.profile.name = displayName;
+  state.profile.firstRun = false;
+  state.profile.googleUser = {
+    id: payload.sub,
+    name: displayName,
+    email: payload.email,
+    picture: payload.picture || '',
+  };
+  saveProfile();
+
+  signInFirebaseWithGoogleCredential(response.credential);
+
+  const nameInput = document.getElementById('profileNameInput');
+  if (nameInput) nameInput.value = displayName;
+  updateGoogleAuthUI();
+  closeModal('profileSetupModal');
+  toast(wasFirstRun ? `Welcome, ${displayName}!` : 'Signed in with Google', 'success');
+  retroLinkAllTrips();
+  renderMoneyView();
+}
+
+function initGoogleSignIn(attempt = 0) {
+  if (googleButtonsRendered) return;
+  if (!window.google || !google.accounts || !google.accounts.id) {
+    if (attempt < 40) setTimeout(() => initGoogleSignIn(attempt + 1), 150);
+    return;
+  }
+
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleCredential,
+    auto_select: false,
+  });
+
+  ['googleSignInSidebar', 'googleSignInProfile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    google.accounts.id.renderButton(el, {
+      theme: 'outline',
+      size: 'large',
+      type: 'standard',
+      shape: 'rectangular',
+      text: 'signin_with',
+      width: Math.min(220, el.clientWidth || 220),
+    });
+  });
+
+  googleButtonsRendered = true;
+  updateGoogleAuthUI();
+}
+
+function updateGoogleAuthUI() {
+  const user = state.profile.googleUser;
+  const signedOut = document.getElementById('sidebarSignedOut');
+  const signedIn = document.getElementById('sidebarSignedIn');
+  if (!signedOut || !signedIn) return;
+
+  signedOut.style.display = user ? 'none' : 'flex';
+  signedIn.style.display = user ? 'flex' : 'none';
+  if (!user) return;
+
+  document.getElementById('googleUserName').textContent = user.name || 'Signed in';
+  document.getElementById('googleUserEmail').textContent = user.email || '';
+  const avatar = document.getElementById('googleUserAvatar');
+  avatar.src = user.picture || 'icons/icon-192.png';
+  avatar.alt = user.name ? `${user.name} profile photo` : 'Google profile photo';
+}
+
+function signOutGoogle() {
+  if (window.google && google.accounts && google.accounts.id) {
+    google.accounts.id.disableAutoSelect();
+  }
+  if (initFirebase()) firebase.auth().signOut().catch(err => console.warn('Firebase sign-out failed:', err));
+  if (window.stopTripCloudSync) stopTripCloudSync();
+  state.profile.googleUser = null;
+  saveProfile();
+  updateGoogleAuthUI();
+  toast('Signed out of Google on this device','info');
+}
+
+window.handleGoogleCredential = handleGoogleCredential;
+window.signOutGoogle = signOutGoogle;
 
 // ── ADD / EDIT TRANSACTION ──
 function openAddTxModal(type){
@@ -864,6 +1028,9 @@ window.removeAllLinkedFromTrip = removeAllLinkedFromTrip;
 function initMoneyManager(){
   loadProfile();
   loadMoney();
+  initFirebaseWhenReady();
+  updateGoogleAuthUI();
+  initGoogleSignIn();
   document.querySelectorAll('.mm-period-btn').forEach(btn => {
     btn.addEventListener('click', () => setMMPeriod(btn.dataset.period));
   });
