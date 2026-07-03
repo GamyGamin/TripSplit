@@ -531,8 +531,7 @@ function saveProfileSettings(){
 }
 function openMMSettings(){ openProfileSetup(false); }
 
-// Google Identity Services sign-in stores profile identity locally.
-const GOOGLE_CLIENT_ID = '282834653236-vgkijul33cp0b8dftpl300ha241dtooj.apps.googleusercontent.com';
+// Firebase Auth stores the Google identity used for cloud trip sync.
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyC_8UgDD7TDvFeRv9AWrtQKM1ni0yU4Tc8",
   authDomain: "tripsplit-94d96.firebaseapp.com",
@@ -545,22 +544,27 @@ const FIREBASE_CONFIG = {
 let googleButtonsRendered = false;
 let firebaseReady = false;
 
+function applyFirebaseUser(user) {
+  if (!user) return;
+  state.profile.googleUser = {
+    id: user.uid,
+    name: user.displayName || state.profile.name || '',
+    email: user.email || '',
+    picture: user.photoURL || '',
+  };
+  state.profile.name = state.profile.name || user.displayName || '';
+  state.profile.firstRun = false;
+  saveProfile();
+  updateGoogleAuthUI();
+}
+
 function initFirebase() {
   if (firebaseReady) return true;
   if (!window.firebase?.initializeApp || !firebase.auth || !firebase.firestore) return false;
   if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
   firebase.auth().onAuthStateChanged(user => {
     if (user) {
-      state.profile.googleUser = {
-        id: user.uid,
-        name: user.displayName || state.profile.name || '',
-        email: user.email || '',
-        picture: user.photoURL || '',
-      };
-      state.profile.name = state.profile.name || user.displayName || '';
-      state.profile.firstRun = false;
-      saveProfile();
-      updateGoogleAuthUI();
+      applyFirebaseUser(user);
       if (window.startTripCloudSync) startTripCloudSync(user);
     } else if (window.stopTripCloudSync) {
       stopTripCloudSync();
@@ -575,88 +579,41 @@ function initFirebaseWhenReady(attempt = 0) {
   if (attempt < 60) setTimeout(() => initFirebaseWhenReady(attempt + 1), 150);
 }
 
-function signInFirebaseWithGoogleCredential(idToken, attempt = 0) {
-  if (!idToken) return;
+function signInWithGoogle(attempt = 0) {
   if (!initFirebase()) {
-    if (attempt < 60) setTimeout(() => signInFirebaseWithGoogleCredential(idToken, attempt + 1), 150);
+    if (attempt < 60) setTimeout(() => signInWithGoogle(attempt + 1), 150);
+    else toast('Google sign-in is still loading. Please try again.','error');
     return;
   }
-  const credential = firebase.auth.GoogleAuthProvider.credential(idToken);
-  firebase.auth().signInWithCredential(credential).catch(err => {
-    console.warn('Firebase Google sign-in failed:', err);
-    toast('Google profile saved, but cloud sync sign-in failed','error');
-  });
-}
-
-function decodeJwtPayload(token) {
-  try {
-    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const json = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map(ch => '%' + ('00' + ch.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-
-function handleGoogleCredential(response) {
-  const payload = decodeJwtPayload(response.credential || '');
-  if (!payload || !payload.email) {
-    toast('Google sign-in failed. Please try again.','error');
-    return;
-  }
-
-  const displayName = payload.name || payload.given_name || payload.email.split('@')[0];
   const wasFirstRun = state.profile.firstRun || !state.profile.name;
-  state.profile.name = displayName;
-  state.profile.firstRun = false;
-  state.profile.googleUser = {
-    id: payload.sub,
-    name: displayName,
-    email: payload.email,
-    picture: payload.picture || '',
-  };
-  saveProfile();
-
-  signInFirebaseWithGoogleCredential(response.credential);
-
-  const nameInput = document.getElementById('profileNameInput');
-  if (nameInput) nameInput.value = displayName;
-  updateGoogleAuthUI();
-  closeModal('profileSetupModal');
-  toast(wasFirstRun ? `Welcome, ${displayName}!` : 'Signed in with Google', 'success');
-  retroLinkAllTrips();
-  renderMoneyView();
+  const provider = new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt:'select_account' });
+  firebase.auth().signInWithPopup(provider).then(result => {
+    const user = result.user;
+    applyFirebaseUser(user);
+    if (window.startTripCloudSync) startTripCloudSync(user);
+    const displayName = user.displayName || user.email || 'there';
+    const nameInput = document.getElementById('profileNameInput');
+    if (nameInput) nameInput.value = displayName;
+    closeModal('profileSetupModal');
+    toast(wasFirstRun ? `Welcome, ${displayName}!` : 'Signed in with Google', 'success');
+    retroLinkAllTrips();
+    renderMoneyView();
+  }).catch(err => {
+    console.warn('Firebase Google sign-in failed:', err);
+    const msg = err?.code === 'auth/unauthorized-domain'
+      ? 'This domain is not authorized in Firebase Authentication.'
+      : 'Google sign-in failed. Please try again.';
+    toast(msg,'error');
+  });
 }
 
 function initGoogleSignIn(attempt = 0) {
   if (googleButtonsRendered) return;
-  if (!window.google || !google.accounts || !google.accounts.id) {
-    if (attempt < 40) setTimeout(() => initGoogleSignIn(attempt + 1), 150);
-    return;
-  }
-
-  google.accounts.id.initialize({
-    client_id: GOOGLE_CLIENT_ID,
-    callback: handleGoogleCredential,
-    auto_select: false,
-  });
-
   ['googleSignInSidebar', 'googleSignInProfile'].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    google.accounts.id.renderButton(el, {
-      theme: 'outline',
-      size: 'large',
-      type: 'standard',
-      shape: 'rectangular',
-      text: 'signin_with',
-      width: Math.min(220, el.clientWidth || 220),
-    });
+    el.innerHTML = `<button class="google-login-btn" type="button" onclick="signInWithGoogle()">Continue with Google</button>`;
   });
 
   googleButtonsRendered = true;
@@ -681,9 +638,6 @@ function updateGoogleAuthUI() {
 }
 
 function signOutGoogle() {
-  if (window.google && google.accounts && google.accounts.id) {
-    google.accounts.id.disableAutoSelect();
-  }
   if (initFirebase()) firebase.auth().signOut().catch(err => console.warn('Firebase sign-out failed:', err));
   if (window.stopTripCloudSync) stopTripCloudSync();
   state.profile.googleUser = null;
@@ -692,7 +646,7 @@ function signOutGoogle() {
   toast('Signed out of Google on this device','info');
 }
 
-window.handleGoogleCredential = handleGoogleCredential;
+window.signInWithGoogle = signInWithGoogle;
 window.signOutGoogle = signOutGoogle;
 
 // ── ADD / EDIT TRANSACTION ──

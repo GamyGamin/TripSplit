@@ -1,11 +1,11 @@
-const CACHE_NAME = "tripsplit-v3";
+const CACHE_NAME = "tripsplit-v4";
 const APP_SHELL = [
   "/",
   "/index.html",
-  "/styles.css?v=cloud1",
-  "/app.js?v=cloud1",
-  "/money.js?v=cloud1",
-  "/pwa.js?v=cloud1",
+  "/styles.css?v=cloud2",
+  "/app.js?v=cloud2",
+  "/money.js?v=cloud2",
+  "/pwa.js?v=cloud2",
   "/manifest.json",
   "/icons/icon-192.png",
   "/icons/icon-512.png",

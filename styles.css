@@ -27,6 +27,8 @@ body::before { content:''; position:fixed; inset:0; background: radial-gradient(
 .auth-copy strong { font-size:14px; font-weight:700; }
 .auth-copy span { color:var(--muted); font-size:12px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
 .google-button-slot { min-height:40px; }
+.google-login-btn { width:100%; min-height:40px; border:1px solid var(--border); border-radius:10px; background:#fff; color:#1f1f1f; cursor:pointer; font-family:'DM Sans',sans-serif; font-size:14px; font-weight:700; display:flex; align-items:center; justify-content:center; padding:9px 12px; transition:transform .15s ease, box-shadow .15s ease; }
+.google-login-btn:hover { transform:translateY(-1px); box-shadow:0 6px 18px rgba(0,0,0,.22); }
 .app-content { flex:1; min-width:0; margin-left:260px; display:flex; flex-direction:column; }
 .content-toolbar { min-height:74px; display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap; padding:18px 36px; border-bottom:1px solid var(--border); background:rgba(15,14,23,.72); backdrop-filter:blur(12px); position:sticky; top:0; z-index:90; }
 .header-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }

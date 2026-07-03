@@ -68,7 +68,7 @@ function tripForCloud(trip) {
 
 function mergeCloudTrips(cloudTrips) {
   const cloudIds = new Set(cloudTrips.map(t => t.id));
-  const localOnly = state.trips.filter(t => !(t.cloudSynced && cloudIds.has(t.id)));
+  const localOnly = state.trips.filter(t => !cloudIds.has(t.id));
   state.trips = [...cloudTrips, ...localOnly].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   migrateTrips(state.trips);
   saveState({ sync:false });
@@ -93,13 +93,18 @@ async function startTripCloudSync(firebaseUser) {
   tripCloud.email = normalizeEmail(firebaseUser.email);
   tripCloud.ready = true;
 
-  await tripCloud.db.collection('users').doc(firebaseUser.uid).set({
-    uid: firebaseUser.uid,
-    email: tripCloud.email,
-    name: firebaseUser.displayName || getCurrentUserName() || '',
-    photoURL: firebaseUser.photoURL || '',
-    lastSeenAt: Date.now(),
-  }, { merge:true });
+  try {
+    await tripCloud.db.collection('users').doc(firebaseUser.uid).set({
+      uid: firebaseUser.uid,
+      email: tripCloud.email,
+      name: firebaseUser.displayName || getCurrentUserName() || '',
+      photoURL: firebaseUser.photoURL || '',
+      lastSeenAt: Date.now(),
+    }, { merge:true });
+  } catch (err) {
+    console.warn('Cloud profile write failed:', err);
+    toast('Cloud profile write blocked. Check Firestore rules.','error');
+  }
 
   tripCloud.unsubscribe = tripCloud.db.collection('trips')
     .where('memberEmails', 'array-contains', tripCloud.email)
