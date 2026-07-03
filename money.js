@@ -275,31 +275,53 @@ function showMoneyView(){
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('moneyView').classList.add('active');
   document.body.classList.add('mm-mode');
-  document.querySelectorAll('.side-nav .nav-btn').forEach((b,i) => b.classList.toggle('active', i === 0));
+  setActiveNav('money');
   document.getElementById('headerActions').innerHTML = `
-    <button class="btn btn-ghost" onclick="openMMSettings()" title="Profile settings">⚙️</button>
+    <button class="btn btn-ghost" onclick="showProfileView()" title="Profile settings">⚙️</button>
     <button class="btn btn-mm-ghost" onclick="openAddTxModal('income')">+ Income</button>
     <button class="btn btn-mm" onclick="openAddTxModal('expense')">+ Expense</button>`;
   state.currentTripId = null;
   renderMoneyView();
 }
 
-function showTripsMainView(){
+function setActiveNav(section){
+  document.querySelectorAll('.side-nav .nav-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.section === section);
+  });
+}
+
+function showGroupList(type){
+  state.activeGroupType = type;
+  const labels = groupLabels(type);
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.getElementById('tripsView').classList.add('active');
   document.body.classList.remove('mm-mode');
-  document.querySelectorAll('.side-nav .nav-btn').forEach((b,i) => b.classList.toggle('active', i === 1));
+  setActiveNav(type === 'home' ? 'homes' : 'trips');
   document.getElementById('headerActions').innerHTML = `
     <button class="btn btn-ghost" onclick="downloadBackup()" title="Download backup file">⬇ Backup</button>
     <button class="btn btn-ghost" onclick="triggerRestoreUpload()" title="Restore from backup file">⬆ Restore</button>
-    <button class="btn btn-primary" onclick="openNewTripModal()">＋ New Trip</button>`;
+    <button class="btn btn-primary" onclick="openNewTripModal()">${labels.newButton}</button>`;
   state.currentTripId = null;
   renderTripsGrid();
 }
 
+function showTripsMainView(){ showGroupList('trip'); }
+function showSharedHomesView(){ showGroupList('home'); }
+
+function showProfileView(){
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('profileView').classList.add('active');
+  document.body.classList.remove('mm-mode');
+  setActiveNav('profile');
+  document.getElementById('headerActions').innerHTML = `
+    <button class="btn btn-ghost" onclick="openProfileSetup(false)">Edit Profile</button>`;
+  state.currentTripId = null;
+  renderProfileView();
+}
+
 // Override the back button's showTripsView (defined in app.js) so the nav
 // state and header actions stay in sync.
-window.showTripsView = showTripsMainView;
+window.showTripsView = function(){ showGroupList(state.activeGroupType || 'trip'); };
 
 // ── RENDER ──
 function renderMoneyView(){
@@ -512,6 +534,13 @@ function openProfileSetup(isFirstRun){
     : 'Update your name and default currency.';
   document.getElementById('profileNameInput').value = state.profile.name || '';
   document.getElementById('profileCurrencyInput').value = state.profile.currency || 'USD';
+  const emailGroup = document.getElementById('profileEmailGroup');
+  const emailInput = document.getElementById('profileEmailInput');
+  const email = state.profile.googleUser?.email || '';
+  if (emailGroup && emailInput) {
+    emailGroup.style.display = email ? 'block' : 'none';
+    emailInput.value = email;
+  }
   openModal('profileSetupModal');
   setTimeout(() => document.getElementById('profileNameInput').focus(), 60);
 }
@@ -526,10 +555,50 @@ function saveProfileSettings(){
   saveProfile();
   closeModal('profileSetupModal');
   toast(wasFirstRun ? `Welcome, ${name}!` : 'Profile saved', 'success');
+  if (state.profile.googleUser && window.startTripCloudSync && window.firebase?.auth?.().currentUser) {
+    startTripCloudSync(firebase.auth().currentUser);
+  }
   retroLinkAllTrips();
   renderMoneyView();
+  if (document.getElementById('profileView')?.classList.contains('active')) renderProfileView();
 }
 function openMMSettings(){ openProfileSetup(false); }
+
+function renderProfileView(){
+  const panel = document.getElementById('profilePanel');
+  if (!panel) return;
+  const user = state.profile.googleUser;
+  const email = user?.email || 'Not signed in';
+  const photo = user?.picture || 'icons/icon-192.png';
+  const name = state.profile.name || user?.name || 'No name set';
+  panel.innerHTML = `
+    <div class="profile-card-main">
+      <img class="profile-avatar-large" src="${photo}" alt="">
+      <div class="profile-main-copy">
+        <h3>${escapeHtml(name)}</h3>
+        <p>${escapeHtml(email)}</p>
+      </div>
+      <button class="btn btn-primary" onclick="openProfileSetup(false)">Edit Name</button>
+    </div>
+    <div class="profile-grid">
+      <div class="profile-info-card">
+        <span>Name</span>
+        <strong>${escapeHtml(name)}</strong>
+      </div>
+      <div class="profile-info-card">
+        <span>Google Email</span>
+        <strong>${escapeHtml(email)}</strong>
+        <small>Email is controlled by Google sign-in.</small>
+      </div>
+      <div class="profile-info-card">
+        <span>Default Currency</span>
+        <strong>${escapeHtml(state.profile.currency || 'USD')}</strong>
+      </div>
+    </div>
+    <div class="profile-actions">
+      ${user ? `<button class="btn btn-ghost" onclick="signOutGoogle()">Sign out</button>` : `<button class="btn btn-mm" onclick="signInWithGoogle()">Continue with Google</button>`}
+    </div>`;
+}
 
 // Firebase Auth stores the Google identity used for cloud trip sync.
 const FIREBASE_CONFIG = {
@@ -556,6 +625,7 @@ function applyFirebaseUser(user) {
   state.profile.firstRun = false;
   saveProfile();
   updateGoogleAuthUI();
+  if (document.getElementById('profileView')?.classList.contains('active')) renderProfileView();
 }
 
 function initFirebase() {
@@ -643,6 +713,7 @@ function signOutGoogle() {
   state.profile.googleUser = null;
   saveProfile();
   updateGoogleAuthUI();
+  if (document.getElementById('profileView')?.classList.contains('active')) renderProfileView();
   toast('Signed out of Google on this device','info');
 }
 

@@ -6,7 +6,7 @@ const CAT_COLORS = { food:'#ff6b35', hotel:'#ffd166', travel:'#06d6a0', fun:'#a8
 const AV_COLORS  = ['#ef476f','#06d6a0','#ffd166','#a855f7','#0ea5e9','#ff6b35','#14b8a6','#f97316'];
 
 // ── STATE ──
-let state = { trips:[], currentTripId:null, splitMode:'equal', editExpenseId:null, manualAmount:false, partialSettle:null };
+let state = { trips:[], currentTripId:null, activeGroupType:'trip', splitMode:'equal', editExpenseId:null, editTransferId:null, manualAmount:false, partialSettle:null };
 let newTripMembers = [], selectedEmoji = '🏖️';
 let pendingRestoreTrips = null;
 let tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false };
@@ -29,8 +29,10 @@ function getCurrentUserName() {
 
 function migrateTrips(trips) {
   trips.forEach(trip => {
+    trip.type = trip.type || 'trip';
     trip.expenses = trip.expenses || [];
     trip.settlements = trip.settlements || [];
+    trip.transfers = trip.transfers || [];
     trip.members = trip.members || [];
     trip.memberEmails = (trip.memberEmails || []).map(normalizeEmail).filter(Boolean);
     trip.memberProfiles = trip.memberProfiles || trip.members.map((name, i) => ({
@@ -42,6 +44,16 @@ function migrateTrips(trips) {
     });
   });
   return trips;
+}
+
+function groupLabels(type = state.activeGroupType || 'trip') {
+  return type === 'home'
+    ? { type:'home', singular:'Shared Home', plural:'Shared Homes', emptyIcon:'🏠', defaultEmoji:'🏠', namePlaceholder:'e.g. Campus Boarding', newButton:'＋ New Home', created:'Shared home' }
+    : { type:'trip', singular:'Trip', plural:'Trips', emptyIcon:'🗺️', defaultEmoji:'🏖️', namePlaceholder:'e.g. Bali Summer 2025', newButton:'＋ New Trip', created:'Trip' };
+}
+
+function groupsForActiveType() {
+  return state.trips.filter(trip => (trip.type || 'trip') === (state.activeGroupType || 'trip'));
 }
 
 function loadState() {
@@ -97,7 +109,7 @@ async function startTripCloudSync(firebaseUser) {
     await tripCloud.db.collection('users').doc(firebaseUser.uid).set({
       uid: firebaseUser.uid,
       email: tripCloud.email,
-      name: firebaseUser.displayName || getCurrentUserName() || '',
+      name: getCurrentUserName() || firebaseUser.displayName || '',
       photoURL: firebaseUser.photoURL || '',
       lastSeenAt: Date.now(),
     }, { merge:true });
@@ -243,23 +255,29 @@ function onManualAmountType() {
 
 // ── TRIPS VIEW ──
 function showTripsView() {
+  state.activeGroupType = state.activeGroupType || 'trip';
+  const labels = groupLabels();
   document.getElementById('tripsView').classList.add('active');
   document.getElementById('tripDetailView').classList.remove('active');
   document.getElementById('headerActions').innerHTML = `
     <button class="btn btn-ghost" onclick="downloadBackup()" title="Download backup file">⬇ Backup</button>
     <button class="btn btn-ghost" onclick="triggerRestoreUpload()" title="Restore from backup file">⬆ Restore</button>
-    <button class="btn btn-primary" onclick="openNewTripModal()">＋ New Trip</button>`;
+    <button class="btn btn-primary" onclick="openNewTripModal()">${labels.newButton}</button>`;
   state.currentTripId = null;
   renderTripsGrid();
 }
 
 function renderTripsGrid() {
   const grid = document.getElementById('tripsGrid');
-  if (!state.trips.length) {
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🗺️</div><h3>No trips yet</h3><p>Create your first trip to start splitting expenses</p></div>`;
+  const labels = groupLabels();
+  const groups = groupsForActiveType();
+  const title = document.getElementById('groupListTitle');
+  if (title) title.innerHTML = `Your <span>${labels.plural}</span>`;
+  if (!groups.length) {
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">${labels.emptyIcon}</div><h3>No ${labels.plural.toLowerCase()} yet</h3><p>Create your first ${labels.singular.toLowerCase()} to start splitting expenses</p></div>`;
     return;
   }
-  grid.innerHTML = state.trips.map(trip => {
+  grid.innerHTML = groups.map(trip => {
     const total = trip.expenses.reduce((s,e)=>s+e.amount,0);
     const { netBalances } = computeBalances(trip);
     const my = getMyTripMemberName(trip), myBal = netBalances[my]||0;
@@ -272,6 +290,7 @@ function renderTripsGrid() {
       <div class="trip-meta">
         <span>👥 ${trip.members.length}</span>
         <span>💸 ${trip.expenses.length} expenses</span>
+        ${(trip.transfers||[]).length ? `<span>⇄ ${(trip.transfers||[]).length} transfers</span>` : ''}
         ${trip.startDate?`<span>📅 ${new Date(trip.startDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>`:''}
       </div>
       <div class="trip-balance">
@@ -284,8 +303,13 @@ function renderTripsGrid() {
 
 // ── NEW TRIP ──
 function openNewTripModal() {
-  newTripMembers=[]; selectedEmoji='🏖️';
+  const labels = groupLabels();
+  newTripMembers=[]; selectedEmoji=labels.defaultEmoji;
   ['tripName','memberInput','memberEmailInput'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('newTripModalTitle').textContent = `Create New ${labels.singular}`;
+  document.getElementById('tripNameLabel').textContent = `${labels.singular} Name`;
+  document.getElementById('tripName').placeholder = labels.namePlaceholder;
+  document.getElementById('createTripButton').textContent = `Create ${labels.singular}`;
   document.getElementById('memberTags').innerHTML='';
   ['tripStartDate','tripEndDate'].forEach(id=>document.getElementById(id).value='');
   const myEmail = getCurrentUserEmail();
@@ -323,31 +347,38 @@ function renderNewMemberTags(){
     </div>`).join('');
 }
 function createTrip(){
+  const labels = groupLabels();
   const name=document.getElementById('tripName').value.trim();
-  if(!name){toast('Enter a trip name','error');return;}
+  if(!name){toast(`Enter a ${labels.singular.toLowerCase()} name`,'error');return;}
   if(!newTripMembers.length){toast('Add at least one member','error');return;}
   const memberNames = newTripMembers.map(m => m.name);
   const memberEmails = Array.from(new Set(newTripMembers.map(m => normalizeEmail(m.email)).filter(Boolean)));
   const memberProfiles = newTripMembers.map(m => ({ name:m.name, email:normalizeEmail(m.email) }));
-  const trip={id:uuid(),name,emoji:selectedEmoji,
+  const trip={id:uuid(),type:labels.type,name,emoji:selectedEmoji,
     startDate:document.getElementById('tripStartDate').value,
     endDate:document.getElementById('tripEndDate').value,
     currency:document.getElementById('tripCurrency').value,
-    members:memberNames,memberEmails,memberProfiles,createdByEmail:getCurrentUserEmail(),updatedAt:Date.now(),expenses:[],settlements:[]};
+    members:memberNames,memberEmails,memberProfiles,createdByEmail:getCurrentUserEmail(),updatedAt:Date.now(),expenses:[],settlements:[],transfers:[]};
   state.trips.unshift(trip);
   saveState();closeModal('newTripModal');
-  toast(`Trip "${name}" created! 🎉`,'success');renderTripsGrid();
+  toast(`${labels.created} "${name}" created! 🎉`,'success');renderTripsGrid();
 }
 
 // ── TRIP DETAIL ──
 function openTrip(id){
   state.currentTripId=id;
+  const trip = getTrip();
+  if (trip) state.activeGroupType = trip.type || 'trip';
+  const labels = groupLabels();
   document.getElementById('tripsView').classList.remove('active');
   document.getElementById('tripDetailView').classList.add('active');
   document.getElementById('headerActions').innerHTML=`
     <button class="btn btn-ghost" onclick="downloadTripPDF()" title="Download PDF report">📄 PDF</button>
     <button class="btn btn-ghost" onclick="openAddMemberModal()">👥 Add Member</button>
+    <button class="btn btn-ghost" onclick="openTransferModal()">⇄ Transfer</button>
     <button class="btn btn-primary" onclick="openAddExpenseModal()">＋ Expense</button>`;
+  const back = document.getElementById('tripBackButton');
+  if (back) back.textContent = `← Back to ${labels.plural}`;
   renderTripDetail();switchTab('expenses');
 }
 function getTrip(){return state.trips.find(t=>t.id===state.currentTripId);}
@@ -363,7 +394,7 @@ function renderTripDetail(){
       <div class="trip-header-emoji">${trip.emoji}</div>
       <div class="trip-header-info">
         <h1>${trip.name}</h1>
-        <p>${trip.members.length} members · ${trip.currency} · ${trip.expenses.length} expenses${trip.startDate?` · ${new Date(trip.startDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${trip.endDate?new Date(trip.endDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'TBD'}`:''}</p>
+        <p>${trip.members.length} members · ${trip.currency} · ${trip.expenses.length} expenses${(trip.transfers||[]).length ? ` · ${(trip.transfers||[]).length} transfers` : ''}${trip.startDate?` · ${new Date(trip.startDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${trip.endDate?new Date(trip.endDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):'TBD'}`:''}</p>
       </div>
     </div>
     <div class="trip-stats">
@@ -390,10 +421,35 @@ function switchTab(tab){
 function renderExpenses(){
   const trip=getTrip();if(!trip)return;
   const list=document.getElementById('expensesList');
-  if(!trip.expenses.length){
-    list.innerHTML=`<div class="empty-state"><div class="empty-icon">💸</div><h3>No expenses yet</h3><p>Add your first expense to get started</p></div>`;
+  const activities = [
+    ...trip.expenses.map(exp => ({ kind:'expense', date:exp.date, item:exp })),
+    ...(trip.transfers || []).map(transfer => ({ kind:'transfer', date:transfer.date, item:transfer }))
+  ].sort((a,b)=>new Date(b.date||0)-new Date(a.date||0));
+  if(!activities.length){
+    list.innerHTML=`<div class="empty-state"><div class="empty-icon">💸</div><h3>No activity yet</h3><p>Add an expense or initiate a transfer to get started</p></div>`;
   } else {
-    list.innerHTML=[...trip.expenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).map(exp=>{
+    list.innerHTML=activities.map(activity=>{
+      if (activity.kind === 'transfer') {
+        const transfer = activity.item;
+        return `
+      <div class="expense-item transfer-item">
+        <div class="expense-cat transfer-cat">⇄</div>
+        <div class="expense-info">
+          <div class="expense-name">Transfer</div>
+          <div class="expense-sub">${transfer.date?new Date(transfer.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):''} · ${transfer.from} sent money to ${transfer.to}</div>
+          ${transfer.note ? `<div class="transfer-note">${transfer.note}</div>` : ''}
+        </div>
+        <div class="expense-right">
+          <div class="expense-amount">${fmt(transfer.amount)}</div>
+          <div class="expense-payer">balance transfer</div>
+        </div>
+        <div class="expense-actions">
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="editTransfer('${transfer.id}')" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteTransfer('${transfer.id}')" title="Delete">🗑️</button>
+        </div>
+      </div>`;
+      }
+      const exp = activity.item;
       const color=CAT_COLORS[exp.category]||'#a09fba';
       const payers=exp.payers||{};
       const payerCount=Object.keys(payers).length;
@@ -477,6 +533,72 @@ function deleteExpense(id){
 }
 
 // ── RENDER PAYER ROWS ──
+function openTransferModal(){
+  const trip=getTrip();if(!trip)return;
+  state.editTransferId = null;
+  document.getElementById('transferModalTitle').textContent = 'Initiate Transfer';
+  populateTransferMembers();
+  document.getElementById('transferAmount').value = '';
+  document.getElementById('transferDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('transferNote').value = '';
+  openModal('transferModal');
+}
+
+function populateTransferMembers(transfer = {}){
+  const trip=getTrip();if(!trip)return;
+  const options = trip.members.map(m => `<option value="${m}">${m}</option>`).join('');
+  document.getElementById('transferFrom').innerHTML = options;
+  document.getElementById('transferTo').innerHTML = options;
+  document.getElementById('transferFrom').value = transfer.from || trip.members[0] || '';
+  document.getElementById('transferTo').value = transfer.to || trip.members[1] || trip.members[0] || '';
+}
+
+function editTransfer(id){
+  const trip=getTrip();if(!trip)return;
+  const transfer=(trip.transfers||[]).find(t=>t.id===id);if(!transfer)return;
+  state.editTransferId = id;
+  document.getElementById('transferModalTitle').textContent = 'Edit Transfer';
+  populateTransferMembers(transfer);
+  document.getElementById('transferAmount').value = transfer.amount;
+  document.getElementById('transferDate').value = transfer.date || new Date().toISOString().split('T')[0];
+  document.getElementById('transferNote').value = transfer.note || '';
+  openModal('transferModal');
+}
+
+function saveTransfer(){
+  const trip=getTrip();if(!trip)return;
+  const from=document.getElementById('transferFrom').value;
+  const to=document.getElementById('transferTo').value;
+  const amount=parseFloat(document.getElementById('transferAmount').value);
+  const date=document.getElementById('transferDate').value;
+  const note=document.getElementById('transferNote').value.trim();
+  if(!from||!to){toast('Select both members','error');return;}
+  if(from===to){toast('Choose two different members','error');return;}
+  if(!amount||amount<=0){toast('Enter a valid transfer amount','error');return;}
+  const transfer={id:state.editTransferId||uuid(),from,to,amount:parseFloat(amount.toFixed(2)),date,note};
+  trip.transfers = trip.transfers || [];
+  if(state.editTransferId){
+    const idx=trip.transfers.findIndex(t=>t.id===state.editTransferId);
+    if(idx>=0)trip.transfers[idx]=transfer;
+    toast('Transfer updated','success');
+  } else {
+    trip.transfers.push(transfer);
+    toast(`${from} → ${to}: ${fmt(amount)} transferred`,'success');
+  }
+  trip.updatedAt = Date.now();
+  state.editTransferId = null;
+  saveState();closeModal('transferModal');
+  renderExpenses();renderTripDetail();renderTripsGrid();renderQuickBalances();
+}
+
+function deleteTransfer(id){
+  const trip=getTrip();if(!trip)return;
+  trip.transfers=(trip.transfers||[]).filter(t=>t.id!==id);
+  trip.updatedAt = Date.now();
+  saveState();renderExpenses();renderTripDetail();renderTripsGrid();renderQuickBalances();
+  toast('Transfer deleted','info');
+}
+
 function renderPayerRows(existing){
   const trip=getTrip();if(!trip)return;
   document.getElementById('payerRows').innerHTML=trip.members.map((m,i)=>`
@@ -614,6 +736,10 @@ function computeBalances(trip){
   trip.expenses.forEach(exp=>{
     Object.entries(exp.payers||{}).forEach(([m,paid])=>{ net[m]=(net[m]||0)+paid; });
     Object.entries(exp.splits).forEach(([m,share])=>{ net[m]=(net[m]||0)-share; });
+  });
+  (trip.transfers||[]).forEach(t=>{
+    net[t.from]=(net[t.from]||0)+t.amount;
+    net[t.to]  =(net[t.to]  ||0)-t.amount;
   });
   trip.settlements.forEach(s=>{
     net[s.from]=(net[s.from]||0)+s.amount;
@@ -805,6 +931,7 @@ function renderSummaryTab(){
       <div class="summary-stat"><div class="summary-stat-value">${fmt(total)}</div><div class="summary-stat-label">Total Spent</div></div>
       <div class="summary-stat"><div class="summary-stat-value">${trip.members.length?fmt(total/trip.members.length):'—'}</div><div class="summary-stat-label">Avg / Person</div></div>
       <div class="summary-stat"><div class="summary-stat-value">${trip.expenses.length}</div><div class="summary-stat-label">Expenses</div></div>
+      <div class="summary-stat"><div class="summary-stat-value">${(trip.transfers||[]).length}</div><div class="summary-stat-label">Transfers</div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
       <div class="sidebar-card"><h3>By Category</h3>${catBars||'<p style="color:var(--muted);font-size:14px;">No expenses yet</p>'}</div>
@@ -994,6 +1121,7 @@ function downloadTripPDF(){
   const total = trip.expenses.reduce((s,e)=>s+e.amount, 0);
   const { netBalances, debts } = computeBalances(trip);
   const totalSettled = (trip.settlements||[]).reduce((s,x)=>s+x.amount, 0);
+  const totalTransferred = (trip.transfers||[]).reduce((s,x)=>s+x.amount, 0);
   const totalOutstanding = debts.reduce((s,d)=>s+d.amount, 0);
   const memberPaid = {};
   trip.members.forEach(m => memberPaid[m] = 0);
@@ -1015,6 +1143,7 @@ function downloadTripPDF(){
     ['Members', `${trip.members.length}`],
     ['Average / Person', trip.members.length ? money(total/trip.members.length) : '—'],
     ['Top Spender', topSpenderEntry && topSpenderEntry[1] > 0 ? `${topSpenderEntry[0]} — ${money(topSpenderEntry[1])}` : '—'],
+    ['Transfers', `${(trip.transfers||[]).length} / ${money(totalTransferred)}`],
     ['Settled', money(totalSettled)],
     ['Outstanding', totalOutstanding < 0.01 ? 'All settled ✓' : money(totalOutstanding)],
   ];
@@ -1099,6 +1228,29 @@ function downloadTripPDF(){
   }
 
   // ── SETTLEMENTS ──
+  if (trip.transfers && trip.transfers.length) {
+    pageBreakIfNeeded(80);
+    doc.setFontSize(14);
+    doc.setFont('helvetica','bold');
+    doc.text('Transfers', M, y);
+    const tList = [...trip.transfers].reverse();
+    if (doc.autoTable) {
+      doc.autoTable({
+        startY: y + 6,
+        head: [['Date', 'From', 'To', 'Amount', 'Note']],
+        body: tList.map(t => {
+          const dateStr = t.date ? new Date(t.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+          return [dateStr, t.from, t.to, money(t.amount), t.note || ''];
+        }),
+        margin: { left: M, right: M },
+        headStyles: { fillColor: [255, 209, 102], textColor: [30,30,30] },
+        styles: { fontSize: 9, cellPadding: 6 },
+        columnStyles: { 3: { halign:'right' } },
+      });
+      y = doc.lastAutoTable.finalY + 20;
+    }
+  }
+
   if (trip.settlements && trip.settlements.length) {
     pageBreakIfNeeded(80);
     doc.setFontSize(14);

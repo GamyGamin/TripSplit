@@ -10,7 +10,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=cloud2">
+<link rel="stylesheet" href="styles.css?v=profile-home-transfer1">
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js" defer></script>
@@ -27,6 +27,8 @@
     <nav class="side-nav" aria-label="Primary">
       <button class="nav-btn active" data-section="money" onclick="showMoneyView()">💰 Money Manager</button>
       <button class="nav-btn" data-section="trips" onclick="showTripsMainView()">✈️ Trips</button>
+      <button class="nav-btn" data-section="homes" onclick="showSharedHomesView()">🏠 Shared Homes</button>
+      <button class="nav-btn" data-section="profile" onclick="showProfileView()">👤 Profile</button>
     </nav>
     <div class="sidebar-auth" id="sidebarAuth">
       <div class="auth-card signed-out" id="sidebarSignedOut">
@@ -42,7 +44,10 @@
           <strong id="googleUserName">Signed in</strong>
           <span id="googleUserEmail"></span>
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="signOutGoogle()">Sign out</button>
+        <div class="auth-actions">
+          <button class="btn btn-ghost btn-sm" onclick="showProfileView()">Profile</button>
+          <button class="btn btn-ghost btn-sm" onclick="signOutGoogle()">Sign out</button>
+        </div>
       </div>
     </div>
   </aside>
@@ -136,14 +141,14 @@
     <!-- ═══ TRIPS LIST ═══ -->
     <div class="view" id="tripsView">
       <div class="section-header">
-        <h2 class="section-title">Your <span>Trips</span></h2>
+        <h2 class="section-title" id="groupListTitle">Your <span>Trips</span></h2>
       </div>
       <div class="trips-grid" id="tripsGrid"></div>
     </div>
 
     <div class="view" id="tripDetailView">
       <div class="trip-nav">
-        <button class="back-btn" onclick="showTripsView()">← Back to Trips</button>
+        <button class="back-btn" id="tripBackButton" onclick="showTripsView()">← Back to Trips</button>
       </div>
       <div class="trip-header-card" id="tripHeaderCard"></div>
       <div class="tabs">
@@ -155,7 +160,8 @@
       <div id="tabExpenses" class="tab-content">
         <div class="two-col">
           <div>
-            <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+            <div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+              <button class="btn btn-ghost" onclick="openTransferModal()">⇄ Initiate Transfer</button>
               <button class="btn btn-primary" onclick="openAddExpenseModal()">＋ Add Expense</button>
             </div>
             <div id="expensesList"></div>
@@ -166,6 +172,13 @@
       <div id="tabBalances" class="tab-content" style="display:none;"><div id="balancesContent"></div></div>
       <div id="tabSummary"  class="tab-content" style="display:none;"><div id="summaryContent"></div></div>
       <div id="tabMembers"  class="tab-content" style="display:none;"><div id="membersContent"></div></div>
+    </div>
+
+    <div class="view" id="profileView">
+      <div class="section-header">
+        <h2 class="section-title">Your <span>Profile</span></h2>
+      </div>
+      <div class="profile-panel" id="profilePanel"></div>
     </div>
   </main>
   </div>
@@ -180,9 +193,9 @@
 <div class="modal-overlay" id="newTripModal">
   <div class="modal">
     <button class="modal-close" onclick="closeModal('newTripModal')">✕</button>
-    <h2>Create New Trip</h2>
+    <h2 id="newTripModalTitle">Create New Trip</h2>
     <div class="form-group">
-      <label>Trip Name</label>
+      <label id="tripNameLabel">Trip Name</label>
       <input type="text" class="form-control" id="tripName" placeholder="e.g. Bali Summer 2025">
     </div>
     <div class="form-group">
@@ -218,7 +231,41 @@
       <div class="form-help">Members with email addresses can see this trip after signing in with that Google account.</div>
       <div class="member-tags" id="memberTags"></div>
     </div>
-    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:13px;" onclick="createTrip()">Create Trip 🚀</button>
+    <button class="btn btn-primary" id="createTripButton" style="width:100%;justify-content:center;padding:13px;" onclick="createTrip()">Create Trip</button>
+  </div>
+</div>
+
+<!-- TRANSFER MODAL -->
+<div class="modal-overlay" id="transferModal">
+  <div class="modal" style="max-width:460px;">
+    <button class="modal-close" onclick="closeModal('transferModal')">✕</button>
+    <h2 id="transferModalTitle">Initiate Transfer</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label>From</label>
+        <select class="form-control" id="transferFrom"></select>
+      </div>
+      <div class="form-group">
+        <label>To</label>
+        <select class="form-control" id="transferTo"></select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Amount</label>
+        <input type="number" class="form-control" id="transferAmount" placeholder="0.00" min="0.01" step="0.01">
+      </div>
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" class="form-control" id="transferDate">
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Note</label>
+      <input type="text" class="form-control" id="transferNote" placeholder="e.g. Advance for hotel booking">
+      <div class="form-help">This is not an expense. It records cash moving between members and updates balances.</div>
+    </div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px;" onclick="saveTransfer()">Save Transfer</button>
   </div>
 </div>
 
@@ -327,6 +374,11 @@
       <label>Your Name</label>
       <input type="text" class="form-control" id="profileNameInput" placeholder="e.g. Iro" onkeydown="if(event.key==='Enter')saveProfileSettings()">
       <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.4;">When you add yourself as a payer on a trip, the payment will auto-appear in your Money Manager.</div>
+    </div>
+    <div class="form-group" id="profileEmailGroup" style="display:none;">
+      <label>Google Email</label>
+      <input type="email" class="form-control" id="profileEmailInput" readonly>
+      <div class="form-help">Email comes from Google sign-in and cannot be changed here.</div>
     </div>
     <div class="form-group">
       <label>Default Currency</label>
@@ -498,8 +550,8 @@
   </div>
 </div>
 
-<script src="app.js?v=cloud2" defer></script>
-<script src="money.js?v=cloud2" defer></script>
-<script src="pwa.js?v=cloud2" defer></script>
+<script src="app.js?v=profile-home-transfer1" defer></script>
+<script src="money.js?v=profile-home-transfer1" defer></script>
+<script src="pwa.js?v=profile-home-transfer1" defer></script>
 </body>
 </html>

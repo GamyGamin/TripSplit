@@ -22,6 +22,8 @@ body::before { content:''; position:fixed; inset:0; background: radial-gradient(
 .sidebar-auth { margin-top:auto; }
 .auth-card { border:1px solid var(--border); border-radius:14px; background:var(--surface); padding:14px; display:flex; flex-direction:column; gap:12px; }
 .auth-card.signed-in { align-items:flex-start; }
+.auth-actions { display:flex; gap:8px; flex-wrap:wrap; width:100%; }
+.auth-actions .btn { flex:1; justify-content:center; padding-left:10px; padding-right:10px; }
 .auth-avatar { width:42px; height:42px; border-radius:50%; object-fit:cover; border:1px solid var(--border); }
 .auth-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .auth-copy strong { font-size:14px; font-weight:700; }
@@ -98,6 +100,9 @@ main { flex:1; padding:32px 36px; max-width:1300px; margin:0 auto; width:100%; }
 /* EXPENSE LIST */
 .expense-item { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 22px; display:flex; align-items:flex-start; gap:16px; margin-bottom:12px; transition:all .2s; }
 .expense-item:hover { border-color:rgba(255,107,53,.3); background:var(--surface2); }
+.transfer-item { border-color:rgba(255,209,102,.24); }
+.transfer-cat { background:rgba(255,209,102,.14); color:var(--accent2); font-weight:700; }
+.transfer-note { font-size:12px; color:var(--muted); margin-top:4px; }
 .expense-cat { width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0; margin-top:2px; }
 .expense-info { flex:1; min-width:0; }
 .expense-name { font-weight:500; font-size:15px; margin-bottom:3px; }
@@ -228,7 +233,7 @@ main { flex:1; padding:32px 36px; max-width:1300px; margin:0 auto; width:100%; }
 .member-tag .remove-member:hover { color:var(--red); }
 
 /* SUMMARY */
-.summary-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:24px; }
+.summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:16px; margin-bottom:24px; }
 .summary-stat { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:20px; text-align:center; }
 .summary-stat-value { font-family:'Playfair Display',serif; font-size:28px; font-weight:700; margin-bottom:4px; }
 .summary-stat-label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
@@ -254,6 +259,20 @@ main { flex:1; padding:32px 36px; max-width:1300px; margin:0 auto; width:100%; }
 .restore-actions { display:flex; gap:10px; flex-wrap:wrap; }
 .restore-actions .btn { flex:1; justify-content:center; padding:12px; min-width:130px; }
 
+/* PROFILE */
+.profile-panel { max-width:900px; }
+.profile-card-main { background:var(--surface); border:1px solid var(--border); border-radius:18px; padding:24px; display:flex; align-items:center; gap:18px; margin-bottom:18px; flex-wrap:wrap; }
+.profile-avatar-large { width:72px; height:72px; border-radius:50%; object-fit:cover; border:1px solid var(--border); background:var(--surface2); }
+.profile-main-copy { flex:1; min-width:220px; }
+.profile-main-copy h3 { font-family:'Playfair Display',serif; font-size:26px; margin-bottom:4px; }
+.profile-main-copy p { color:var(--muted); font-size:14px; overflow-wrap:anywhere; }
+.profile-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+.profile-info-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; display:flex; flex-direction:column; gap:6px; }
+.profile-info-card span { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+.profile-info-card strong { font-size:16px; overflow-wrap:anywhere; }
+.profile-info-card small { color:var(--muted); line-height:1.45; }
+.profile-actions { margin-top:16px; display:flex; gap:10px; flex-wrap:wrap; }
+
 /* ════════════════════════════════════════════════════════
    MONEY MANAGER — distinct teal/green theme
    ════════════════════════════════════════════════════════ */
@@ -269,6 +288,8 @@ body.mm-mode::before {
 .nav-btn { padding:9px 18px; border-radius:10px; cursor:pointer; font-size:14px; font-weight:500; color:var(--muted); transition:all .2s; border:none; background:none; font-family:'DM Sans',sans-serif; display:inline-flex; align-items:center; gap:7px; }
 .nav-btn.active[data-section="money"] { background:var(--mm); color:#fff; }
 .nav-btn.active[data-section="trips"] { background:var(--accent); color:#fff; }
+.nav-btn.active[data-section="homes"] { background:#0ea5e9; color:#fff; }
+.nav-btn.active[data-section="profile"] { background:#a855f7; color:#fff; }
 .nav-btn:not(.active):hover { background:var(--surface2); color:var(--text); }
 
 /* Money Manager buttons (replace orange accent with teal) */
