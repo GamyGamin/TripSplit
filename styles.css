@@ -99,6 +99,8 @@ main { flex:1; padding:32px 36px; max-width:1300px; margin:0 auto; width:100%; }
 
 /* EXPENSE LIST */
 .expense-item { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px 22px; display:flex; align-items:flex-start; gap:16px; margin-bottom:12px; transition:all .2s; }
+.expense-item.clickable { cursor:pointer; }
+.expense-item.clickable:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .expense-item:hover { border-color:rgba(255,107,53,.3); background:var(--surface2); }
 .transfer-item { border-color:rgba(255,209,102,.24); }
 .transfer-cat { background:rgba(255,209,102,.14); color:var(--accent2); font-weight:700; }
@@ -107,6 +109,7 @@ main { flex:1; padding:32px 36px; max-width:1300px; margin:0 auto; width:100%; }
 .expense-info { flex:1; min-width:0; }
 .expense-name { font-weight:500; font-size:15px; margin-bottom:3px; }
 .expense-sub { font-size:12px; color:var(--muted); margin-bottom:6px; }
+.expense-added-by { font-size:11px; color:var(--muted); margin-top:5px; }
 /* multi-payer pills */
 .payer-pills { display:flex; flex-wrap:wrap; gap:5px; margin-top:4px; }
 .payer-pill { display:inline-flex; align-items:center; gap:5px; background:var(--surface2); border:1px solid var(--border); border-radius:20px; padding:3px 10px; font-size:11px; color:var(--muted); }
@@ -163,6 +166,27 @@ main { flex:1; padding:32px 36px; max-width:1300px; margin:0 auto; width:100%; }
 .modal h2 { font-family:'Playfair Display',serif; font-size:24px; margin-bottom:24px; font-weight:700; }
 .modal-close { position:absolute; top:20px; right:20px; background:var(--surface2); border:1px solid var(--border); color:var(--muted); width:32px; height:32px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:16px; transition:all .2s; }
 .modal-close:hover { color:var(--text); background:var(--border); }
+.expense-details-modal { max-width:680px; }
+.expense-detail-head { display:flex; align-items:flex-start; gap:14px; padding-right:36px; margin-bottom:22px; }
+.expense-detail-title { flex:1; min-width:0; }
+.expense-detail-title h2 { margin-bottom:6px; }
+.expense-detail-meta { color:var(--muted); font-size:13px; line-height:1.5; }
+.expense-detail-total { background:var(--surface2); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:18px; display:flex; align-items:center; justify-content:space-between; gap:14px; }
+.expense-detail-total span { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+.expense-detail-total strong { font-family:'Playfair Display',serif; font-size:28px; color:var(--accent2); }
+.expense-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.expense-detail-section { background:var(--bg); border:1px solid var(--border); border-radius:14px; padding:16px; }
+.expense-detail-section h3 { font-family:'Playfair Display',serif; font-size:17px; margin-bottom:12px; }
+.expense-detail-row { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); font-size:14px; }
+.expense-detail-row:last-child { border-bottom:none; padding-bottom:0; }
+.expense-detail-row-name { flex:1; min-width:0; }
+.expense-detail-row-name small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+.expense-detail-amount { font-family:'Playfair Display',serif; font-size:16px; font-weight:600; color:var(--text); white-space:nowrap; }
+.expense-detail-note { color:var(--muted); font-size:12px; line-height:1.5; margin-top:12px; }
+.delete-confirm-summary { background:rgba(239,71,111,.10); border:1px solid rgba(239,71,111,.28); border-radius:12px; padding:14px 16px; margin-bottom:18px; color:var(--text); font-size:14px; line-height:1.5; }
+.delete-confirm-summary b { color:var(--red); }
+.delete-confirm-actions { display:flex; gap:10px; flex-wrap:wrap; }
+.delete-confirm-actions .btn { flex:1; justify-content:center; min-width:130px; padding:12px; }
 .profile-google-block { margin:6px 0 18px; }
 .profile-google-divider { display:flex; align-items:center; gap:10px; margin:4px 0 14px; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
 .profile-google-divider::before,
@@ -450,6 +474,10 @@ body.mm-mode::before {
   main{padding:20px 16px}
   .tabs{width:100%;flex-wrap:wrap}
   .tab{flex:1 1 auto;padding:9px 14px}
+  .expense-detail-grid{grid-template-columns:1fr}
+  .expense-detail-total{align-items:flex-start;flex-direction:column}
+  .expense-detail-total > div:last-child{text-align:left}
+  .expense-detail-total > div:last-child > div{justify-content:flex-start !important}
   .form-row{grid-template-columns:1fr} .summary-grid{grid-template-columns:1fr}
   .trip-stats{gap:16px} .stat-value{font-size:18px}
   .header-actions{gap:6px}

@@ -10,7 +10,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=profile-home-transfer1">
+<link rel="stylesheet" href="styles.css?v=expense-details1">
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js" defer></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js" defer></script>
@@ -296,6 +296,11 @@
       <label>Date</label>
       <input type="date" class="form-control" id="expenseDate">
     </div>
+    <div class="form-group">
+      <label>Entry Added By</label>
+      <select class="form-control" id="expenseAddedBy"></select>
+      <div class="form-help">This records who entered the expense into TripSplit. It can be different from who paid.</div>
+    </div>
 
     <!-- ══ WHO PAID — MULTI PAYER ══ -->
     <div class="form-group">
@@ -333,6 +338,27 @@
     </div>
 
     <button class="btn btn-primary" style="width:100%;justify-content:center;padding:13px;margin-top:4px;" onclick="saveExpense()">Save Expense</button>
+  </div>
+</div>
+
+<!-- EXPENSE DETAILS MODAL -->
+<div class="modal-overlay" id="expenseDetailsModal">
+  <div class="modal expense-details-modal">
+    <button class="modal-close" onclick="closeModal('expenseDetailsModal')">✕</button>
+    <div id="expenseDetailsContent"></div>
+  </div>
+</div>
+
+<!-- DELETE EXPENSE CONFIRMATION MODAL -->
+<div class="modal-overlay" id="deleteExpenseModal">
+  <div class="modal" style="max-width:420px;">
+    <button class="modal-close" onclick="cancelDeleteExpense()">✕</button>
+    <h2>Delete Expense?</h2>
+    <div class="delete-confirm-summary" id="deleteExpenseSummary"></div>
+    <div class="delete-confirm-actions">
+      <button class="btn btn-ghost" onclick="cancelDeleteExpense()">Cancel</button>
+      <button class="btn btn-danger" onclick="confirmDeleteExpense()">Yes, Delete</button>
+    </div>
   </div>
 </div>
 
@@ -550,7 +576,7 @@
   </div>
 </div>
 
-<script src="app.js?v=profile-home-transfer1" defer></script>
+<script src="app.js?v=expense-details1" defer></script>
 <script src="money.js?v=profile-home-transfer1" defer></script>
 <script src="pwa.js?v=profile-home-transfer1" defer></script>
 </body>

@@ -6,7 +6,7 @@ const CAT_COLORS = { food:'#ff6b35', hotel:'#ffd166', travel:'#06d6a0', fun:'#a8
 const AV_COLORS  = ['#ef476f','#06d6a0','#ffd166','#a855f7','#0ea5e9','#ff6b35','#14b8a6','#f97316'];
 
 // ── STATE ──
-let state = { trips:[], currentTripId:null, activeGroupType:'trip', splitMode:'equal', editExpenseId:null, editTransferId:null, manualAmount:false, partialSettle:null };
+let state = { trips:[], currentTripId:null, activeGroupType:'trip', splitMode:'equal', editExpenseId:null, editTransferId:null, pendingDeleteExpenseId:null, manualAmount:false, partialSettle:null };
 let newTripMembers = [], selectedEmoji = '🏖️';
 let pendingRestoreTrips = null;
 let tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false };
@@ -41,6 +41,10 @@ function migrateTrips(trips) {
     }));
     trip.expenses.forEach(exp => {
       if (exp.paidBy && !exp.payers) { exp.payers = { [exp.paidBy]: exp.amount }; delete exp.paidBy; }
+      if (!exp.addedBy) exp.addedBy = Object.keys(exp.payers || {})[0] || '';
+      if (!exp.addedByEmail && exp.addedBy) {
+        exp.addedByEmail = normalizeEmail((trip.memberProfiles || []).find(m => m.name === exp.addedBy)?.email || '');
+      }
     });
   });
   return trips;
@@ -178,6 +182,9 @@ function getMyTripMemberName(trip) {
   }
   const profileName = getCurrentUserName().toLowerCase();
   return trip.members.find(m => m.toLowerCase() === profileName) || trip.members[0];
+}
+function getExpenseAddedByLabel(exp) {
+  return exp.addedBy || Object.keys(exp.payers || {})[0] || 'Unknown';
 }
 function miniAvatar(name, size=16) {
   const col = avColor(name);
@@ -458,12 +465,14 @@ function renderExpenses(){
       const payerLabel = payerCount===1
         ? `paid by ${Object.keys(payers)[0]}`
         : `${payerCount} people paid`;
+      const addedBy = getExpenseAddedByLabel(exp);
       return `
-      <div class="expense-item">
+      <div class="expense-item clickable" role="button" tabindex="0" onclick="openExpenseDetails('${exp.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openExpenseDetails('${exp.id}');}">
         <div class="expense-cat cat-${exp.category}" style="color:${color}">${CAT_ICONS[exp.category]||'📦'}</div>
         <div class="expense-info">
           <div class="expense-name">${exp.name}</div>
           <div class="expense-sub">${exp.date?new Date(exp.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}):''} · ${exp.splitType} split · ${payerLabel}</div>
+          <div class="expense-added-by">Added by ${addedBy}</div>
           ${payerCount>1?`<div class="payer-pills">${pills}</div>`:''}
         </div>
         <div class="expense-right">
@@ -471,13 +480,86 @@ function renderExpenses(){
           <div class="expense-payer">÷ ${Object.keys(exp.splits).length} people</div>
         </div>
         <div class="expense-actions">
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="editExpense('${exp.id}')" title="Edit">✏️</button>
-          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteExpense('${exp.id}')" title="Delete">🗑️</button>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="event.stopPropagation();editExpense('${exp.id}')" title="Edit">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="event.stopPropagation();deleteExpense('${exp.id}')" title="Delete">🗑️</button>
         </div>
       </div>`;
     }).join('');
   }
   renderQuickBalances();
+}
+
+function openExpenseDetails(id){
+  const trip=getTrip();if(!trip)return;
+  const exp=trip.expenses.find(e=>e.id===id);if(!exp)return;
+  const color=CAT_COLORS[exp.category]||'#a09fba';
+  const categoryLabel=CAT_LABELS[exp.category] || exp.category || 'Other';
+  const payers=Object.entries(exp.payers||{});
+  const splits=Object.entries(exp.splits||{});
+  const addedBy=getExpenseAddedByLabel(exp);
+  const addedByEmail=exp.addedByEmail || getMemberEmail(trip, addedBy);
+  const addedAt=exp.addedAt ? new Date(exp.addedAt) : null;
+  const addedAtText=addedAt && !Number.isNaN(addedAt.getTime())
+    ? addedAt.toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
+    : 'Not recorded';
+  const paidTotal=payers.reduce((sum,[,amt])=>sum+amt,0);
+  const splitTotal=splits.reduce((sum,[,amt])=>sum+amt,0);
+  const splitLabel={equal:'Equal split', exact:'Exact amount split', percent:'Percentage split'}[exp.splitType] || `${exp.splitType || 'Custom'} split`;
+
+  document.getElementById('expenseDetailsContent').innerHTML=`
+    <div class="expense-detail-head">
+      <div class="expense-cat cat-${exp.category}" style="color:${color}">${CAT_ICONS[exp.category]||'📦'}</div>
+      <div class="expense-detail-title">
+        <h2>${exp.name}</h2>
+        <div class="expense-detail-meta">
+          ${categoryLabel} · ${exp.date ? new Date(exp.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'No date'} · ${splitLabel}
+        </div>
+      </div>
+    </div>
+    <div class="expense-detail-total">
+      <div>
+        <span>Total expense</span>
+        <strong>${fmt(exp.amount)}</strong>
+      </div>
+      <div style="text-align:right;">
+        <span>Entered by</span>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:6px;">
+          ${avatar(addedBy,28)}
+          <div style="font-size:14px;font-weight:600;">${addedBy}</div>
+        </div>
+      </div>
+    </div>
+    <div class="expense-detail-grid">
+      <div class="expense-detail-section">
+        <h3>Who Paid</h3>
+        ${payers.length ? payers.map(([member,amount])=>`
+          <div class="expense-detail-row">
+            ${avatar(member,30)}
+            <div class="expense-detail-row-name">${member}<small>${getMemberEmail(trip, member) || 'No email on trip'}</small></div>
+            <div class="expense-detail-amount">${fmt(amount)}</div>
+          </div>`).join('') : '<p class="settled-empty">No payer details saved.</p>'}
+        <div class="expense-detail-note">Payer total: ${fmt(paidTotal)}</div>
+      </div>
+      <div class="expense-detail-section">
+        <h3>Split Among</h3>
+        ${splits.length ? splits.map(([member,share])=>`
+          <div class="expense-detail-row">
+            ${avatar(member,30)}
+            <div class="expense-detail-row-name">${member}<small>${exp.amount ? (share/exp.amount*100).toFixed(1) : '0.0'}% of total</small></div>
+            <div class="expense-detail-amount">${fmt(share)}</div>
+          </div>`).join('') : '<p class="settled-empty">No split details saved.</p>'}
+        <div class="expense-detail-note">Split total: ${fmt(splitTotal)}</div>
+      </div>
+    </div>
+    <div class="expense-detail-section" style="margin-top:16px;">
+      <h3>Entry Audit</h3>
+      <div class="expense-detail-row">
+        ${avatar(addedBy,30)}
+        <div class="expense-detail-row-name">${addedBy}<small>${addedByEmail || 'No email recorded'}</small></div>
+        <div class="expense-detail-amount" style="font-family:'DM Sans',sans-serif;font-size:13px;color:var(--muted);">${addedAtText}</div>
+      </div>
+    </div>`;
+  openModal('expenseDetailsModal');
 }
 
 function renderQuickBalances(){
@@ -503,6 +585,7 @@ function openAddExpenseModal(){
   document.getElementById('expenseCategory').value='food';
   document.getElementById('tripCurrencyLabel').textContent=trip.currency;
   document.querySelectorAll('.split-tab').forEach((t,i)=>t.classList.toggle('active',i===0));
+  populateExpenseAddedBy();
   renderPayerRows({});
   renderSplitMembers({});
   openModal('addExpenseModal');
@@ -519,14 +602,45 @@ function editExpense(id){
   document.getElementById('expenseCategory').value=exp.category;
   document.getElementById('tripCurrencyLabel').textContent=trip.currency;
   document.querySelectorAll('.split-tab').forEach((t,i)=>t.classList.toggle('active',['equal','exact','percent'][i]===state.splitMode));
+  populateExpenseAddedBy(exp);
   renderPayerRows(exp.payers||{});
   renderSplitMembers(exp.splits||{});
   openModal('addExpenseModal');
 }
 
+function populateExpenseAddedBy(exp = {}){
+  const trip=getTrip();if(!trip)return;
+  const select=document.getElementById('expenseAddedBy');
+  const members=trip.members || [];
+  select.innerHTML=members.map(member => {
+    const email=getMemberEmail(trip, member);
+    return `<option value="${member}">${member}${email ? ` (${email})` : ''}</option>`;
+  }).join('');
+  select.value = exp.addedBy || getMyTripMemberName(trip) || members[0] || '';
+}
+
 function deleteExpense(id){
   const trip=getTrip();if(!trip)return;
+  const exp=trip.expenses.find(e=>e.id===id);if(!exp)return;
+  state.pendingDeleteExpenseId=id;
+  document.getElementById('deleteExpenseSummary').innerHTML=`
+    <div>Are you sure you want to delete <b>${exp.name}</b>?</div>
+    <div style="margin-top:6px;color:var(--muted);">Amount: ${fmt(exp.amount)}${exp.date ? ` · ${new Date(exp.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` : ''}</div>
+    <div style="margin-top:8px;color:var(--muted);font-size:12px;">This removes the expense from trip balances and summaries.</div>`;
+  openModal('deleteExpenseModal');
+}
+
+function cancelDeleteExpense(){
+  state.pendingDeleteExpenseId=null;
+  closeModal('deleteExpenseModal');
+}
+
+function confirmDeleteExpense(){
+  const trip=getTrip();if(!trip||!state.pendingDeleteExpenseId)return;
+  const id=state.pendingDeleteExpenseId;
   trip.expenses=trip.expenses.filter(e=>e.id!==id);
+  state.pendingDeleteExpenseId=null;
+  closeModal('deleteExpenseModal');
   saveState();renderExpenses();renderTripDetail();renderTripsGrid();
   if (window.removeLinkedMoneyTx) window.removeLinkedMoneyTx(id);
   toast('Expense deleted','info');
@@ -708,11 +822,17 @@ function saveExpense(){
   }
   if(!Object.keys(splits).length){toast('No one to split among','error');return;}
 
+  const existingExpense = state.editExpenseId ? trip.expenses.find(e=>e.id===state.editExpenseId) : null;
+  const addedBy = document.getElementById('expenseAddedBy').value || getMyTripMemberName(trip) || '';
   const expense={
+    ...(existingExpense || {}),
     id:state.editExpenseId||uuid(), name, amount, payers,
     category:document.getElementById('expenseCategory').value,
     date:document.getElementById('expenseDate').value,
-    splitType:state.splitMode, splits
+    splitType:state.splitMode, splits,
+    addedBy,
+    addedByEmail:getMemberEmail(trip, addedBy),
+    addedAt:existingExpense?.addedAt || new Date().toISOString()
   };
 
   if(state.editExpenseId){
