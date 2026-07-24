@@ -9,7 +9,7 @@ const AV_COLORS  = ['#ef476f','#06d6a0','#ffd166','#a855f7','#0ea5e9','#ff6b35',
 let state = { trips:[], currentTripId:null, activeGroupType:'trip', splitMode:'equal', editExpenseId:null, editTransferId:null, pendingDeleteExpenseId:null, manualAmount:false, partialSettle:null };
 let newTripMembers = [], selectedEmoji = '🏖️';
 let pendingRestoreTrips = null;
-let tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false };
+let tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false, hasSnapshot:false };
 
 function normalizeEmail(email) {
   return (email || '').trim().toLowerCase();
@@ -33,6 +33,9 @@ function migrateTrips(trips) {
     trip.expenses = trip.expenses || [];
     trip.settlements = trip.settlements || [];
     trip.transfers = trip.transfers || [];
+    trip.deletedExpenseIds = trip.deletedExpenseIds || [];
+    trip.deletedTransferIds = trip.deletedTransferIds || [];
+    trip.deletedSettlementIds = trip.deletedSettlementIds || [];
     trip.members = trip.members || [];
     trip.memberEmails = (trip.memberEmails || []).map(normalizeEmail).filter(Boolean);
     trip.memberProfiles = trip.memberProfiles || trip.members.map((name, i) => ({
@@ -74,27 +77,136 @@ function tripCanSync(trip) {
 }
 
 function tripForCloud(trip) {
-  return {
+  const clean = {
     ...JSON.parse(JSON.stringify(trip)),
     memberEmails: Array.from(new Set((trip.memberEmails || []).map(normalizeEmail).filter(Boolean))),
-    updatedAt: Date.now(),
     updatedBy: tripCloud.email || '',
+  };
+  delete clean.localDirty;
+  delete clean.cloudSynced;
+  return clean;
+}
+
+function uniqueValues(values) {
+  return Array.from(new Set((values || []).filter(Boolean)));
+}
+
+function itemTimestamp(item) {
+  const candidates = [item?.updatedAt, item?.addedAt, item?.createdAt, item?.date];
+  for (const value of candidates) {
+    if (!value) continue;
+    if (typeof value === 'number') return value;
+    const time = new Date(String(value).includes('T') ? value : `${value}T00:00:00`).getTime();
+    if (!Number.isNaN(time)) return time;
+  }
+  return 0;
+}
+
+function mergeItemsById(localItems = [], cloudItems = [], deletedIds = []) {
+  const deleted = new Set(deletedIds || []);
+  const byId = new Map();
+  cloudItems.forEach(item => {
+    if (item?.id && !deleted.has(item.id)) byId.set(item.id, item);
+  });
+  let addedFromLocal = false;
+  localItems.forEach(item => {
+    if (!item?.id || deleted.has(item.id)) return;
+    const existing = byId.get(item.id);
+    if (!existing) {
+      byId.set(item.id, item);
+      addedFromLocal = true;
+      return;
+    }
+    if (itemTimestamp(item) > itemTimestamp(existing)) {
+      byId.set(item.id, item);
+    }
+  });
+  return { items:Array.from(byId.values()), addedFromLocal };
+}
+
+function mergeMemberProfiles(local = {}, cloud = {}) {
+  const profiles = [...(cloud.memberProfiles || []), ...(local.memberProfiles || [])];
+  const byKey = new Map();
+  profiles.forEach(profile => {
+    const name = profile?.name || '';
+    const email = normalizeEmail(profile?.email || '');
+    const key = email || name.toLowerCase();
+    if (key && !byKey.has(key)) byKey.set(key, { name, email });
+  });
+  const members = uniqueValues([...(cloud.members || []), ...(local.members || []), ...Array.from(byKey.values()).map(p => p.name)]);
+  const memberEmails = uniqueValues([...(cloud.memberEmails || []), ...(local.memberEmails || []), ...Array.from(byKey.values()).map(p => p.email)].map(normalizeEmail));
+  const memberProfiles = members.map(name => {
+    const email = normalizeEmail(byKey.get(name.toLowerCase())?.email || (cloud.memberProfiles || []).find(p => p.name === name)?.email || (local.memberProfiles || []).find(p => p.name === name)?.email || '');
+    return { name, email };
+  });
+  return { members, memberEmails, memberProfiles };
+}
+
+function mergeTripRecords(localTrip, cloudTrip) {
+  if (!localTrip) return { trip:cloudTrip, localContributed:false };
+  const cloudUpdated = cloudTrip.updatedAt || 0;
+  const localUpdated = localTrip.updatedAt || 0;
+  const latestBase = localTrip.localDirty && localUpdated > cloudUpdated ? localTrip : cloudTrip;
+  const deletedExpenseIds = uniqueValues([...(cloudTrip.deletedExpenseIds || []), ...(localTrip.deletedExpenseIds || [])]);
+  const deletedTransferIds = uniqueValues([...(cloudTrip.deletedTransferIds || []), ...(localTrip.deletedTransferIds || [])]);
+  const deletedSettlementIds = uniqueValues([...(cloudTrip.deletedSettlementIds || []), ...(localTrip.deletedSettlementIds || [])]);
+  const expenses = mergeItemsById(localTrip.expenses, cloudTrip.expenses, deletedExpenseIds);
+  const transfers = mergeItemsById(localTrip.transfers, cloudTrip.transfers, deletedTransferIds);
+  const settlements = mergeItemsById(localTrip.settlements, cloudTrip.settlements, deletedSettlementIds);
+  const memberData = mergeMemberProfiles(localTrip, cloudTrip);
+  const localContributed = !!localTrip.localDirty || expenses.addedFromLocal || transfers.addedFromLocal || settlements.addedFromLocal;
+  return {
+    trip:{
+      ...cloudTrip,
+      ...latestBase,
+      ...memberData,
+      expenses:expenses.items,
+      transfers:transfers.items,
+      settlements:settlements.items,
+      deletedExpenseIds,
+      deletedTransferIds,
+      deletedSettlementIds,
+      cloudSynced:true,
+      localDirty:localContributed,
+      updatedAt:localContributed ? Math.max(localUpdated, cloudUpdated, Date.now()) : Math.max(localUpdated, cloudUpdated),
+    },
+    localContributed
   };
 }
 
+function markTripUpdated(trip) {
+  if (!trip) return;
+  trip.updatedAt = Date.now();
+  trip.localDirty = true;
+}
+
 function mergeCloudTrips(cloudTrips) {
+  let shouldPushLocalContributions = false;
+  const localById = new Map(state.trips.map(t => [t.id, t]));
   const cloudIds = new Set(cloudTrips.map(t => t.id));
+  const mergedCloudTrips = cloudTrips.map(cloudTrip => {
+    const { trip, localContributed } = mergeTripRecords(localById.get(cloudTrip.id), cloudTrip);
+    shouldPushLocalContributions = shouldPushLocalContributions || localContributed;
+    return trip;
+  });
   const localOnly = state.trips.filter(t => !cloudIds.has(t.id));
-  state.trips = [...cloudTrips, ...localOnly].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  shouldPushLocalContributions = shouldPushLocalContributions || localOnly.some(t => t.localDirty);
+  state.trips = [...mergedCloudTrips, ...localOnly].sort((a,b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   migrateTrips(state.trips);
   saveState({ sync:false });
+  return shouldPushLocalContributions;
 }
 
 async function syncTripsToCloud() {
-  if (!tripCloud.ready || tripCloud.applying) return;
-  const trips = state.trips.filter(tripCanSync).map(tripForCloud);
+  if (!tripCloud.ready || !tripCloud.hasSnapshot || tripCloud.applying) return;
+  const dirtyTrips = state.trips.filter(trip => trip.localDirty && tripCanSync(trip));
+  const trips = dirtyTrips.map(tripForCloud);
   await Promise.all(trips.map(trip =>
-    tripCloud.db.collection('trips').doc(trip.id).set(trip, { merge:true }).catch(err => {
+    tripCloud.db.collection('trips').doc(trip.id).set(trip, { merge:true }).then(() => {
+      const localTrip = state.trips.find(t => t.id === trip.id);
+      if (localTrip) delete localTrip.localDirty;
+      saveState({ sync:false });
+    }).catch(err => {
       console.warn('Trip cloud sync failed:', err);
     })
   ));
@@ -108,6 +220,7 @@ async function startTripCloudSync(firebaseUser) {
   tripCloud.user = firebaseUser;
   tripCloud.email = normalizeEmail(firebaseUser.email);
   tripCloud.ready = true;
+  tripCloud.hasSnapshot = false;
 
   try {
     await tripCloud.db.collection('users').doc(firebaseUser.uid).set({
@@ -130,25 +243,26 @@ async function startTripCloudSync(firebaseUser) {
         const data = doc.data();
         return { ...data, id: data.id || doc.id, cloudSynced:true };
       });
-      mergeCloudTrips(cloudTrips);
+      const shouldPushLocalContributions = mergeCloudTrips(cloudTrips);
+      tripCloud.hasSnapshot = true;
       tripCloud.applying = false;
       if (document.getElementById('tripsView')?.classList.contains('active')) renderTripsGrid();
       if (state.currentTripId && document.getElementById('tripDetailView')?.classList.contains('active')) {
         renderTripDetail();
         renderExpenses();
       }
+      if (shouldPushLocalContributions) syncTripsToCloud();
     }, err => {
       tripCloud.applying = false;
       console.warn('Trip cloud listener failed:', err);
       toast('Cloud trip sync needs Firestore access/rules','error');
     });
 
-  syncTripsToCloud();
 }
 
 function stopTripCloudSync() {
   if (tripCloud.unsubscribe) tripCloud.unsubscribe();
-  tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false };
+  tripCloud = { db:null, user:null, email:null, unsubscribe:null, applying:false, ready:false, hasSnapshot:false };
 }
 
 window.startTripCloudSync = startTripCloudSync;
@@ -365,7 +479,8 @@ function createTrip(){
     startDate:document.getElementById('tripStartDate').value,
     endDate:document.getElementById('tripEndDate').value,
     currency:document.getElementById('tripCurrency').value,
-    members:memberNames,memberEmails,memberProfiles,createdByEmail:getCurrentUserEmail(),updatedAt:Date.now(),expenses:[],settlements:[],transfers:[]};
+    members:memberNames,memberEmails,memberProfiles,createdByEmail:getCurrentUserEmail(),updatedAt:Date.now(),localDirty:true,
+    expenses:[],settlements:[],transfers:[],deletedExpenseIds:[],deletedTransferIds:[],deletedSettlementIds:[]};
   state.trips.unshift(trip);
   saveState();closeModal('newTripModal');
   toast(`${labels.created} "${name}" created! 🎉`,'success');renderTripsGrid();
@@ -639,6 +754,8 @@ function confirmDeleteExpense(){
   const trip=getTrip();if(!trip||!state.pendingDeleteExpenseId)return;
   const id=state.pendingDeleteExpenseId;
   trip.expenses=trip.expenses.filter(e=>e.id!==id);
+  trip.deletedExpenseIds = uniqueValues([...(trip.deletedExpenseIds || []), id]);
+  markTripUpdated(trip);
   state.pendingDeleteExpenseId=null;
   closeModal('deleteExpenseModal');
   saveState();renderExpenses();renderTripDetail();renderTripsGrid();
@@ -689,7 +806,8 @@ function saveTransfer(){
   if(!from||!to){toast('Select both members','error');return;}
   if(from===to){toast('Choose two different members','error');return;}
   if(!amount||amount<=0){toast('Enter a valid transfer amount','error');return;}
-  const transfer={id:state.editTransferId||uuid(),from,to,amount:parseFloat(amount.toFixed(2)),date,note};
+  const existingTransfer = state.editTransferId ? (trip.transfers || []).find(t=>t.id===state.editTransferId) : null;
+  const transfer={...(existingTransfer || {}),id:state.editTransferId||uuid(),from,to,amount:parseFloat(amount.toFixed(2)),date,note,updatedAt:Date.now()};
   trip.transfers = trip.transfers || [];
   if(state.editTransferId){
     const idx=trip.transfers.findIndex(t=>t.id===state.editTransferId);
@@ -699,7 +817,7 @@ function saveTransfer(){
     trip.transfers.push(transfer);
     toast(`${from} → ${to}: ${fmt(amount)} transferred`,'success');
   }
-  trip.updatedAt = Date.now();
+  markTripUpdated(trip);
   state.editTransferId = null;
   saveState();closeModal('transferModal');
   renderExpenses();renderTripDetail();renderTripsGrid();renderQuickBalances();
@@ -708,7 +826,8 @@ function saveTransfer(){
 function deleteTransfer(id){
   const trip=getTrip();if(!trip)return;
   trip.transfers=(trip.transfers||[]).filter(t=>t.id!==id);
-  trip.updatedAt = Date.now();
+  trip.deletedTransferIds = uniqueValues([...(trip.deletedTransferIds || []), id]);
+  markTripUpdated(trip);
   saveState();renderExpenses();renderTripDetail();renderTripsGrid();renderQuickBalances();
   toast('Transfer deleted','info');
 }
@@ -832,7 +951,8 @@ function saveExpense(){
     splitType:state.splitMode, splits,
     addedBy,
     addedByEmail:getMemberEmail(trip, addedBy),
-    addedAt:existingExpense?.addedAt || new Date().toISOString()
+    addedAt:existingExpense?.addedAt || new Date().toISOString(),
+    updatedAt:Date.now()
   };
 
   if(state.editExpenseId){
@@ -843,6 +963,7 @@ function saveExpense(){
     trip.expenses.push(expense);
     toast('Expense added ✅','success');
   }
+  markTripUpdated(trip);
   saveState();closeModal('addExpenseModal');
   renderExpenses();renderTripDetail();renderTripsGrid();
   // Auto-link this expense to the user's personal Money Manager (no-op if not a payer)
@@ -927,7 +1048,8 @@ function renderBalancesTab(){
 
 function settleDebt(from,to,amount){
   const trip=getTrip();if(!trip)return;
-  trip.settlements.push({id:uuid(),from,to,amount,date:new Date().toISOString().split('T')[0]});
+  trip.settlements.push({id:uuid(),from,to,amount,date:new Date().toISOString().split('T')[0],updatedAt:Date.now()});
+  markTripUpdated(trip);
   saveState();renderBalancesTab();renderTripDetail();renderTripsGrid();renderQuickBalances();
   toast(`${from} → ${to}: ${fmt(amount)} settled`,'success');
 }
@@ -1021,6 +1143,8 @@ function formatSettlementDate(date){
 function unsettleSettlement(index){
   const trip=getTrip();if(!trip||!trip.settlements||!trip.settlements[index])return;
   const [settlement]=trip.settlements.splice(index,1);
+  if (settlement?.id) trip.deletedSettlementIds = uniqueValues([...(trip.deletedSettlementIds || []), settlement.id]);
+  markTripUpdated(trip);
   saveState();renderBalancesTab();renderTripDetail();renderTripsGrid();renderQuickBalances();
   toast(`${settlement.from} → ${settlement.to}: ${fmt(settlement.amount)} unsettled`,'info');
 }
@@ -1110,7 +1234,7 @@ function addMemberToTrip(){
   trip.members.push(name);
   if(email) trip.memberEmails.push(email);
   trip.memberProfiles.push({ name, email });
-  trip.updatedAt = Date.now();
+  markTripUpdated(trip);
   saveState();closeModal('addMemberModal');renderTripDetail();renderExpenses();
   toast(`${name} added to trip!`,'success');
 }
